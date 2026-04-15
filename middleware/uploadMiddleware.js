@@ -6,6 +6,10 @@ const uploadsRoot = path.join(__dirname, '..', 'uploads');
 const imageDir = path.join(uploadsRoot, 'images');
 const videoDir = path.join(uploadsRoot, 'videos');
 const certificateDir = path.join(uploadsRoot, 'certificates');
+const configuredUploadMaxMb = Number(process.env.UPLOAD_MAX_MB || 500);
+const uploadMaxMb = Number.isFinite(configuredUploadMaxMb) && configuredUploadMaxMb > 0
+  ? configuredUploadMaxMb
+  : 500;
 
 [uploadsRoot, imageDir, videoDir, certificateDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
@@ -52,7 +56,7 @@ const createUploader = (allowedPrefix) => multer({
     cb(new Error(`Faqat ${allowedPrefix === 'any' ? 'image yoki video' : allowedPrefix} fayl yuklash mumkin.`));
   },
   limits: {
-    fileSize: 200 * 1024 * 1024,
+    fileSize: uploadMaxMb * 1024 * 1024,
   },
 });
 

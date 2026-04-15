@@ -2,6 +2,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
 const connectDB = require('./config/db');
 
 const authRoutes = require('./routes/authRoutes');
@@ -26,10 +27,37 @@ connectDB();
 
 const app = express();
 
-app.use(cors({
-  origin: '*',
-}));
+const allowedOrigins = (process.env.CORS_ORIGINS || [
+  'https://tarmoqacademy.uz',
+  'https://www.tarmoqacademy.uz',
+  'http://localhost:3000',
+  'http://localhost:5500',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5500',
+].join(','))
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    if (origin === 'null' && process.env.CORS_ALLOW_NULL_ORIGIN === 'true') {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
 app.use(express.json({ limit: '10mb' }));
@@ -68,10 +96,32 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
     return res.status(400).json({
       success: false,
       message: 'Invalid JSON payload.',
+    });
+  }
+
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'Fayl hajmi juda katta. Serverdagi upload limitini tekshiring.'
+      : err.message;
+
+    return res.status(400).json({
+      success: false,
+      message,
+    });
+  }
+
+  if (err.message && err.message.startsWith('CORS blocked')) {
+    return res.status(403).json({
+      success: false,
+      message: err.message,
     });
   }
 
