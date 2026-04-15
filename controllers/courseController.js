@@ -7,15 +7,11 @@ const User = require('../models/User');
 const UserProgress = require('../models/UserProgress');
 const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
-
-const isUserEnrolledInCourse = (user, courseId) => {
-  if (!user) return false;
-  if (user.role === 'admin') return true;
-
-  return [...(user.enrolledCourses || []), ...(user.purchasedCourses || [])].some(
-    (id) => id.toString() === courseId.toString()
-  );
-};
+const {
+  buildLessonVideoStreamUrl,
+  getPreviewLessonKey,
+  isUserEnrolledInCourse,
+} = require('../utils/lessonVideo');
 
 // Helper: calculate course progress for a user
 const getCourseProgress = async (courseId, userId) => {
@@ -35,14 +31,6 @@ const getCourseProgress = async (courseId, userId) => {
   });
 
   return Math.round((completedCount / totalLessons) * 100);
-};
-
-const getPreviewLessonKey = async (courseId) => {
-  const firstModule = await Module.findOne({ courseId }).sort({ order: 1 }).select('_id');
-  if (!firstModule) return null;
-
-  const firstLesson = await Lesson.findOne({ moduleId: firstModule._id }).sort({ order: 1 }).select('_id');
-  return firstLesson ? firstLesson._id.toString() : null;
 };
 
 // @desc    Get all courses with user progress
@@ -151,32 +139,34 @@ const getCourseById = async (req, res) => {
       for (const lesson of lessons) {
         totalLessons += 1;
         const isPreviewLesson = !hasFullAccess && previewLessonKey === lesson._id.toString();
+        const canAccessLesson = hasFullAccess || isPreviewLesson;
         const taskSubmission = taskSubmissionMap.get(lesson._id.toString());
 
         lessonsWithProgress.push({
           id: lesson._id,
           title: lesson.title,
-          videoUrl: hasFullAccess || isPreviewLesson ? lesson.videoUrl : '',
-          content: hasFullAccess || isPreviewLesson ? lesson.content : '',
-          task: hasFullAccess || isPreviewLesson ? lesson.task : '',
+          videoUrl: canAccessLesson ? lesson.videoUrl : '',
+          videoStreamUrl: canAccessLesson ? buildLessonVideoStreamUrl(lesson, req.user._id) : '',
+          content: canAccessLesson ? lesson.content : '',
+          task: canAccessLesson ? lesson.task : '',
           duration: lesson.duration,
           order: lesson.order,
           completed: hasFullAccess ? completedLessonIds.has(lesson._id.toString()) : false,
           locked: !hasFullAccess && !isPreviewLesson,
           previewAccessible: isPreviewLesson,
-          taskAnswer: hasFullAccess || isPreviewLesson ? taskSubmission?.answer || '' : '',
-          taskAnsweredAt: hasFullAccess || isPreviewLesson ? taskSubmission?.updatedAt || null : null,
-          taskAttachmentName: hasFullAccess || isPreviewLesson ? taskSubmission?.attachmentName || '' : '',
-          taskAttachmentSize: hasFullAccess || isPreviewLesson ? taskSubmission?.attachmentSize || 0 : 0,
-          submissionId: hasFullAccess || isPreviewLesson ? taskSubmission?._id || '' : '',
-          submissionStatus: hasFullAccess || isPreviewLesson
+          taskAnswer: canAccessLesson ? taskSubmission?.answer || '' : '',
+          taskAnsweredAt: canAccessLesson ? taskSubmission?.updatedAt || null : null,
+          taskAttachmentName: canAccessLesson ? taskSubmission?.attachmentName || '' : '',
+          taskAttachmentSize: canAccessLesson ? taskSubmission?.attachmentSize || 0 : 0,
+          submissionId: canAccessLesson ? taskSubmission?._id || '' : '',
+          submissionStatus: canAccessLesson
             ? taskSubmission?.status || (taskSubmission ? 'pending' : null)
             : null,
-          reviewedAt: hasFullAccess || isPreviewLesson ? taskSubmission?.reviewedAt || null : null,
-          reviewedBy: hasFullAccess || isPreviewLesson
+          reviewedAt: canAccessLesson ? taskSubmission?.reviewedAt || null : null,
+          reviewedBy: canAccessLesson
             ? taskSubmission?.reviewedBy?.name || taskSubmission?.reviewedBy?.email || ''
             : '',
-          reviewNote: hasFullAccess || isPreviewLesson ? taskSubmission?.reviewNote || '' : '',
+          reviewNote: canAccessLesson ? taskSubmission?.reviewNote || '' : '',
         });
       }
 

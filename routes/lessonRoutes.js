@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const {
   getLessonById,
+  streamLessonVideo,
   createLesson,
   updateLesson,
   deleteLesson,
@@ -10,6 +11,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const roleMiddleware = require('../middleware/roleMiddleware');
 const { uploadVideo } = require('../middleware/uploadMiddleware');
 
+router.get('/:id/video', streamLessonVideo);
 router.get('/:id', authMiddleware, getLessonById);
 
 // Admin only

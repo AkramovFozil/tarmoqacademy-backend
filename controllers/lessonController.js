@@ -1,11 +1,45 @@
+const fs = require('fs');
+const path = require('path');
 const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Progress = require('../models/Progress');
 const TaskSubmission = require('../models/TaskSubmission');
+const User = require('../models/User');
+const {
+  buildLessonVideoStreamUrl,
+  getPreviewLessonKey,
+  isLocalVideoPath,
+  isUserEnrolledInCourse,
+  verifyLessonVideoToken,
+} = require('../utils/lessonVideo');
 
 const buildVideoPath = (file) => {
   if (!file) return '';
   return `videos/${file.filename}`;
+};
+
+const videoContentTypes = {
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogg': 'video/ogg',
+  '.ogv': 'video/ogg',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/x-m4v',
+};
+
+const getVideoContentType = (filePath) => (
+  videoContentTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
+);
+
+const getBearerToken = (req) => {
+  if (req.query.token) return req.query.token;
+
+  const authorization = req.headers.authorization || '';
+  if (authorization.startsWith('Bearer ')) {
+    return authorization.split(' ')[1];
+  }
+
+  return '';
 };
 
 // @desc    Get a single lesson with next/prev navigation
@@ -18,6 +52,17 @@ const getLessonById = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: 'Lesson not found.' });
+    }
+
+    const hasFullAccess = isUserEnrolledInCourse(req.user, lesson.moduleId.courseId);
+    const previewLessonKey = hasFullAccess ? null : await getPreviewLessonKey(lesson.moduleId.courseId);
+    const canAccessLesson = hasFullAccess || previewLessonKey === lesson._id.toString();
+
+    if (!canAccessLesson) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bu dars uchun ruxsat yo\'q.',
+      });
     }
 
     // Check if lesson is completed by this user
@@ -71,6 +116,7 @@ const getLessonById = async (req, res) => {
         id: lesson._id,
         title: lesson.title,
         videoUrl: lesson.videoUrl,
+        videoStreamUrl: buildLessonVideoStreamUrl(lesson, req.user._id),
         content: lesson.content,
         task: lesson.task,
         duration: lesson.duration,
@@ -86,6 +132,112 @@ const getLessonById = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Stream a protected lesson video
+// @route   GET /api/lessons/:id/video
+// @access  Signed video token
+const streamLessonVideo = async (req, res) => {
+  try {
+    const token = getBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'Video token required.' });
+    }
+
+    const payload = verifyLessonVideoToken(token, req.params.id);
+    const [lesson, user] = await Promise.all([
+      Lesson.findById(req.params.id),
+      User.findById(payload.sub).select('role enrolledCourses purchasedCourses'),
+    ]);
+
+    if (!lesson || !user) {
+      return res.status(404).json({ success: false, message: 'Video topilmadi.' });
+    }
+
+    if (!isLocalVideoPath(lesson.videoUrl)) {
+      return res.status(404).json({ success: false, message: 'Bu darsda lokal video yo\'q.' });
+    }
+
+    const module = await Module.findById(lesson.moduleId).select('courseId');
+    if (!module) {
+      return res.status(404).json({ success: false, message: 'Modul topilmadi.' });
+    }
+
+    const hasFullAccess = isUserEnrolledInCourse(user, module.courseId);
+    const previewLessonKey = hasFullAccess ? null : await getPreviewLessonKey(module.courseId);
+    const canAccessVideo = hasFullAccess || previewLessonKey === lesson._id.toString();
+
+    if (!canAccessVideo) {
+      return res.status(403).json({ success: false, message: 'Bu video uchun ruxsat yo\'q.' });
+    }
+
+    const uploadsRoot = path.resolve(__dirname, '..', 'uploads');
+    const videoPath = path.resolve(uploadsRoot, lesson.videoUrl);
+    if (!videoPath.startsWith(`${uploadsRoot}${path.sep}`)) {
+      return res.status(400).json({ success: false, message: 'Video yo\'li noto\'g\'ri.' });
+    }
+
+    if (!fs.existsSync(videoPath)) {
+      return res.status(404).json({ success: false, message: 'Video fayl topilmadi.' });
+    }
+
+    const stat = fs.statSync(videoPath);
+    const fileSize = stat.size;
+    const contentType = getVideoContentType(videoPath);
+    const range = req.headers.range;
+    const baseHeaders = {
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'no-store, private',
+      'Content-Type': contentType,
+      'Content-Disposition': 'inline',
+      'X-Content-Type-Options': 'nosniff',
+    };
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = Number.parseInt(parts[0], 10);
+      const end = parts[1] ? Number.parseInt(parts[1], 10) : fileSize - 1;
+
+      if (
+        Number.isNaN(start)
+        || Number.isNaN(end)
+        || start >= fileSize
+        || end >= fileSize
+        || start > end
+      ) {
+        res.writeHead(416, {
+          ...baseHeaders,
+          'Content-Range': `bytes */${fileSize}`,
+        });
+        return res.end();
+      }
+
+      const chunkSize = end - start + 1;
+      res.writeHead(206, {
+        ...baseHeaders,
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Content-Length': chunkSize,
+      });
+
+      return fs.createReadStream(videoPath, { start, end }).pipe(res);
+    }
+
+    res.writeHead(200, {
+      ...baseHeaders,
+      'Content-Length': fileSize,
+    });
+    return fs.createReadStream(videoPath).pipe(res);
+  } catch (error) {
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Video token muddati tugagan.' });
+    }
+
+    if (error.name === 'JsonWebTokenError' || error.message === 'Invalid video token.') {
+      return res.status(401).json({ success: false, message: 'Video token noto\'g\'ri.' });
+    }
+
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -183,4 +335,4 @@ const deleteLesson = async (req, res) => {
   }
 };
 
-module.exports = { getLessonById, createLesson, updateLesson, deleteLesson };
+module.exports = { getLessonById, streamLessonVideo, createLesson, updateLesson, deleteLesson };
