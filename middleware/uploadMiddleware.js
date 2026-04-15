@@ -6,10 +6,10 @@ const uploadsRoot = path.join(__dirname, '..', 'uploads');
 const imageDir = path.join(uploadsRoot, 'images');
 const videoDir = path.join(uploadsRoot, 'videos');
 const certificateDir = path.join(uploadsRoot, 'certificates');
-const configuredUploadMaxMb = Number(process.env.UPLOAD_MAX_MB || 500);
+const configuredUploadMaxMb = Number(process.env.UPLOAD_MAX_MB || 1024);
 const uploadMaxMb = Number.isFinite(configuredUploadMaxMb) && configuredUploadMaxMb > 0
   ? configuredUploadMaxMb
-  : 500;
+  : 1024;
 
 [uploadsRoot, imageDir, videoDir, certificateDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
