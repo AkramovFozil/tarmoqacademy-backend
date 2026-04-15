@@ -25,11 +25,13 @@ const { getUserStats } = require('./controllers/progressController');
 connectDB();
 
 const app = express();
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
 
 app.use(cors({
   origin: '*',
 }));
+
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
