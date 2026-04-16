@@ -1,10 +1,5 @@
-const jwt = require('jsonwebtoken');
 const Module = require('../models/Module');
 const Lesson = require('../models/Lesson');
-
-const videoTokenExpiresIn = process.env.VIDEO_TOKEN_EXPIRES_IN || '4h';
-
-const isLocalVideoPath = (videoUrl = '') => videoUrl.startsWith('videos/');
 
 const isUserEnrolledInCourse = (user, courseId) => {
   if (!user) return false;
@@ -23,45 +18,7 @@ const getPreviewLessonKey = async (courseId) => {
   return firstLesson ? firstLesson._id.toString() : null;
 };
 
-const createLessonVideoToken = ({ userId, lessonId }) => jwt.sign(
-  {
-    sub: userId.toString(),
-    lessonId: lessonId.toString(),
-    purpose: 'lesson-video',
-  },
-  process.env.JWT_SECRET,
-  { expiresIn: videoTokenExpiresIn }
-);
-
-const verifyLessonVideoToken = (token, lessonId) => {
-  const payload = jwt.verify(token, process.env.JWT_SECRET);
-
-  if (
-    payload.purpose !== 'lesson-video'
-    || payload.lessonId !== lessonId.toString()
-    || !payload.sub
-  ) {
-    throw new Error('Invalid video token.');
-  }
-
-  return payload;
-};
-
-const buildLessonVideoStreamUrl = (lesson, userId) => {
-  if (!lesson || !isLocalVideoPath(lesson.videoUrl)) return '';
-
-  const token = createLessonVideoToken({
-    userId,
-    lessonId: lesson._id,
-  });
-
-  return `/api/lessons/${lesson._id}/video?token=${encodeURIComponent(token)}`;
-};
-
 module.exports = {
-  buildLessonVideoStreamUrl,
   getPreviewLessonKey,
-  isLocalVideoPath,
   isUserEnrolledInCourse,
-  verifyLessonVideoToken,
 };

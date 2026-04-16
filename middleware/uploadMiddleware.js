@@ -2,7 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 
-const uploadsRoot = path.join(__dirname, '..', 'uploads');
+const uploadsRoot = process.env.UPLOADS_DIR
+  ? (path.isAbsolute(process.env.UPLOADS_DIR)
+      ? process.env.UPLOADS_DIR
+      : path.resolve(__dirname, '..', process.env.UPLOADS_DIR))
+  : path.join(__dirname, '..', 'uploads');
 const imageDir = path.join(uploadsRoot, 'images');
 const videoDir = path.join(uploadsRoot, 'videos');
 const certificateDir = path.join(uploadsRoot, 'certificates');

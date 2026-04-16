@@ -8,7 +8,6 @@ const UserProgress = require('../models/UserProgress');
 const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
 const {
-  buildLessonVideoStreamUrl,
   getPreviewLessonKey,
   isUserEnrolledInCourse,
 } = require('../utils/lessonVideo');
@@ -146,7 +145,7 @@ const getCourseById = async (req, res) => {
           id: lesson._id,
           title: lesson.title,
           videoUrl: canAccessLesson ? lesson.videoUrl : '',
-          videoStreamUrl: canAccessLesson ? buildLessonVideoStreamUrl(lesson, req.user._id) : '',
+          videoStreamUrl: '',
           content: canAccessLesson ? lesson.content : '',
           task: canAccessLesson ? lesson.task : '',
           duration: lesson.duration,
