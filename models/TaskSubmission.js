@@ -22,6 +22,11 @@ const taskSubmissionSchema = new mongoose.Schema(
       default: '',
       trim: true,
     },
+    fileUrl: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     attachmentSize: {
       type: Number,
       default: 0,

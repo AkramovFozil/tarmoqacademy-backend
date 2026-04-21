@@ -10,12 +10,13 @@ const uploadsRoot = process.env.UPLOADS_DIR
 const imageDir = path.join(uploadsRoot, 'images');
 const videoDir = path.join(uploadsRoot, 'videos');
 const certificateDir = path.join(uploadsRoot, 'certificates');
+const taskDir = path.join(uploadsRoot, 'tasks');
 const configuredUploadMaxMb = Number(process.env.UPLOAD_MAX_MB || 1024);
 const uploadMaxMb = Number.isFinite(configuredUploadMaxMb) && configuredUploadMaxMb > 0
   ? configuredUploadMaxMb
   : 1024;
 
-[uploadsRoot, imageDir, videoDir, certificateDir].forEach((dir) => {
+[uploadsRoot, imageDir, videoDir, certificateDir, taskDir].forEach((dir) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -64,9 +65,37 @@ const createUploader = (allowedPrefix) => multer({
   },
 });
 
+const taskStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, taskDir),
+  filename: (req, file, cb) => {
+    const safeName = file.originalname.replace(/\s+/g, '-');
+    cb(null, `${Date.now()}-${safeName}`);
+  },
+});
+
+const uploadTask = multer({
+  storage: taskStorage,
+  fileFilter: (req, file, cb) => {
+    const isAllowed =
+      file.mimetype.startsWith('image/')
+      || file.mimetype.startsWith('video/')
+      || file.mimetype === 'application/pdf';
+
+    if (isAllowed) {
+      return cb(null, true);
+    }
+
+    return cb(new Error('Faqat PDF, rasm yoki video fayl yuklash mumkin.'));
+  },
+  limits: {
+    fileSize: uploadMaxMb * 1024 * 1024,
+  },
+});
+
 module.exports = {
   upload: createUploader('any'),
   uploadImage: createUploader('image'),
   uploadVideo: createUploader('video'),
   uploadPdf: createUploader('pdf'),
+  uploadTask,
 };

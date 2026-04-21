@@ -119,7 +119,7 @@ const getCourseById = async (req, res) => {
       userId: req.user._id,
       lessonId: { $in: courseLessonDocs.map((lesson) => lesson._id) },
     })
-      .select('lessonId answer attachmentName attachmentSize status reviewedAt reviewedBy reviewNote createdAt updatedAt')
+      .select('lessonId answer attachmentName fileUrl attachmentSize status reviewedAt reviewedBy reviewNote createdAt updatedAt')
       .populate('reviewedBy', 'name email');
     const taskSubmissionMap = new Map(
       taskSubmissions.map((submission) => [
@@ -156,6 +156,7 @@ const getCourseById = async (req, res) => {
           taskAnswer: canAccessLesson ? taskSubmission?.answer || '' : '',
           taskAnsweredAt: canAccessLesson ? taskSubmission?.updatedAt || null : null,
           taskAttachmentName: canAccessLesson ? taskSubmission?.attachmentName || '' : '',
+          taskFileUrl: canAccessLesson ? taskSubmission?.fileUrl || '' : '',
           taskAttachmentSize: canAccessLesson ? taskSubmission?.attachmentSize || 0 : 0,
           submissionId: canAccessLesson ? taskSubmission?._id || '' : '',
           submissionStatus: canAccessLesson

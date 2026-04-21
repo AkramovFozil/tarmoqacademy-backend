@@ -6,6 +6,8 @@ const TaskSubmission = require('../models/TaskSubmission');
 const User = require('../models/User');
 const UserProgress = require('../models/UserProgress');
 
+const buildTaskFileUrl = (file) => (file ? `/uploads/tasks/${file.filename}` : '');
+
 const hasFullCourseAccess = (user, courseId) => {
   if (!user) return false;
   if (user.role === 'admin') return true;
@@ -74,6 +76,7 @@ const serializeSubmission = (submission) => {
     answer: submission.answer,
     content: submission.answer,
     attachmentName: submission.attachmentName || '',
+    fileUrl: submission.fileUrl || '',
     attachmentSize: submission.attachmentSize || 0,
     status: submission.status || 'pending',
     submittedAt: submission.createdAt,
@@ -106,8 +109,10 @@ const populateSubmissionQuery = (query) =>
 // @access  Private
 const submitTaskAnswer = async (req, res) => {
   try {
-    const { lessonId, answer, attachmentName, attachmentSize } = req.body;
-    const normalizedAttachmentSize = Number(attachmentSize || 0);
+    const { lessonId, answer } = req.body;
+    const uploadedFile = req.file || null;
+
+    console.debug('[task.submit] req.file', uploadedFile);
 
     if (!lessonId || !String(answer || '').trim()) {
       return res.status(400).json({
@@ -128,14 +133,29 @@ const submitTaskAnswer = async (req, res) => {
       });
     }
 
+    const existingSubmission = await TaskSubmission.findOne({
+      userId: req.user._id,
+      lessonId,
+    });
+    const fileUrl = uploadedFile
+      ? buildTaskFileUrl(uploadedFile)
+      : existingSubmission?.fileUrl || '';
+    const attachmentName = uploadedFile
+      ? String(uploadedFile.originalname || '').trim()
+      : existingSubmission?.attachmentName || '';
+    const attachmentSize = uploadedFile
+      ? Number(uploadedFile.size || 0)
+      : Number(existingSubmission?.attachmentSize || 0);
+
     const submission = await TaskSubmission.findOneAndUpdate(
       { userId: req.user._id, lessonId },
       {
         userId: req.user._id,
         lessonId,
         answer: String(answer).trim(),
-        attachmentName: String(attachmentName || '').trim(),
-        attachmentSize: Number.isFinite(normalizedAttachmentSize) ? normalizedAttachmentSize : 0,
+        attachmentName,
+        fileUrl,
+        attachmentSize: Number.isFinite(attachmentSize) ? attachmentSize : 0,
         status: 'pending',
         reviewedAt: null,
         reviewedBy: null,
@@ -166,6 +186,7 @@ const submitTaskAnswer = async (req, res) => {
         answer: submission.answer,
         content: submission.answer,
         attachmentName: submission.attachmentName || '',
+        fileUrl: submission.fileUrl || '',
         attachmentSize: submission.attachmentSize || 0,
         status: submission.status,
         reviewedAt: submission.reviewedAt,
