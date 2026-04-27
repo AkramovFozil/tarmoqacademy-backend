@@ -16,6 +16,19 @@ const lessonSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    videoType: {
+      type: String,
+      enum: ['file', 'external', 'hls'],
+      default: 'file',
+    },
+    hlsKey: {
+      type: String,
+      default: '',
+    },
+    hlsRenditions: {
+      type: [Number],
+      default: [],
+    },
     content: {
       type: String,
       default: '',

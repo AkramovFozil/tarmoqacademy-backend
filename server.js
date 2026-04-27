@@ -19,6 +19,7 @@ const taskRoutes = require('./routes/taskRoutes');
 const aiRoutes = require('./routes/aiRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
+const videoRoutes = require('./routes/video.routes');
 const authMiddleware = require('./middleware/authMiddleware');
 const { getMyCourses } = require('./controllers/userController');
 const { getUserStats } = require('./controllers/progressController');
@@ -90,6 +91,7 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/applications', applicationRoutes);
+app.use('/api/videos', videoRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'API working' });

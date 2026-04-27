@@ -130,7 +130,10 @@ const getLessonById = async (req, res) => {
         id: lesson._id,
         title: lesson.title,
         videoUrl: lesson.videoUrl,
-        videoStreamUrl: '',
+        videoType: lesson.videoType,
+        videoStreamUrl: lesson.videoType === 'hls'
+          ? `/api/videos/lessons/${lesson._id}/playback-url`
+          : '',
         content: lesson.content,
         task: lesson.task,
         duration: lesson.duration,
@@ -174,6 +177,7 @@ const createLesson = async (req, res) => {
       moduleId,
       title,
       videoUrl: normalizedVideoUrl,
+      videoType: normalizedVideoUrl && /^https?:\/\//i.test(normalizedVideoUrl) ? 'external' : 'file',
       content,
       task,
       duration,
@@ -200,6 +204,11 @@ const updateLesson = async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(updatePayload, 'videoUrl')) {
       try {
         updatePayload.videoUrl = normalizeVideoUrl(updatePayload.videoUrl);
+        updatePayload.videoType = updatePayload.videoUrl && /^https?:\/\//i.test(updatePayload.videoUrl)
+          ? 'external'
+          : 'file';
+        updatePayload.hlsKey = '';
+        updatePayload.hlsRenditions = [];
       } catch (error) {
         return res.status(400).json({ success: false, message: error.message });
       }

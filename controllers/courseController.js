@@ -145,7 +145,10 @@ const getCourseById = async (req, res) => {
           id: lesson._id,
           title: lesson.title,
           videoUrl: canAccessLesson ? lesson.videoUrl : '',
-          videoStreamUrl: '',
+          videoType: canAccessLesson ? lesson.videoType : '',
+          videoStreamUrl: canAccessLesson && lesson.videoType === 'hls'
+            ? `/api/videos/lessons/${lesson._id}/playback-url`
+            : '',
           content: canAccessLesson ? lesson.content : '',
           task: canAccessLesson ? lesson.task : '',
           duration: lesson.duration,
