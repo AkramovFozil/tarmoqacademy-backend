@@ -56,6 +56,19 @@ const normalizeVideoUrl = (value = '') => {
   return parsedUrl.pathname;
 };
 
+const normalizeCloudflareVideoUid = (value = '') => {
+  const uid = String(value || '').trim();
+  if (!uid) return '';
+
+  if (!/^[A-Za-z0-9_-]{6,128}$/.test(uid)) {
+    throw new Error('Cloudflare Video UID noto\'g\'ri.');
+  }
+
+  return uid;
+};
+
+const buildCloudflareVideoUrl = (videoUid) => `https://iframe.videodelivery.net/${videoUid}`;
+
 // @desc    Get a single lesson with next/prev navigation
 // @route   GET /api/lessons/:id
 // @access  Private
@@ -129,6 +142,8 @@ const getLessonById = async (req, res) => {
       lesson: {
         id: lesson._id,
         title: lesson.title,
+        videoProvider: lesson.videoProvider,
+        videoUid: lesson.videoUid,
         videoUrl: lesson.videoUrl,
         videoType: lesson.videoType,
         videoStreamUrl: lesson.videoType === 'hls'
@@ -157,11 +172,15 @@ const getLessonById = async (req, res) => {
 // @access  Private/Admin
 const createLesson = async (req, res) => {
   try {
-    const { moduleId, title, videoUrl, content, task, duration, order } = req.body || {};
-    let normalizedVideoUrl;
+    const { moduleId, title, videoUrl, videoUid, content, task, duration, order } = req.body || {};
+    let normalizedVideoUrl = '';
+    let normalizedVideoUid = '';
 
     try {
-      normalizedVideoUrl = normalizeVideoUrl(videoUrl);
+      normalizedVideoUid = normalizeCloudflareVideoUid(videoUid);
+      normalizedVideoUrl = normalizedVideoUid
+        ? buildCloudflareVideoUrl(normalizedVideoUid)
+        : normalizeVideoUrl(videoUrl);
     } catch (error) {
       return res.status(400).json({ success: false, message: error.message });
     }
@@ -177,6 +196,10 @@ const createLesson = async (req, res) => {
       moduleId,
       title,
       videoUrl: normalizedVideoUrl,
+      videoProvider: normalizedVideoUid
+        ? 'cloudflare'
+        : (normalizedVideoUrl && /^https?:\/\//i.test(normalizedVideoUrl) ? 'external' : 'local'),
+      videoUid: normalizedVideoUid,
       videoType: normalizedVideoUrl && /^https?:\/\//i.test(normalizedVideoUrl) ? 'external' : 'file',
       content,
       task,
@@ -201,14 +224,38 @@ const updateLesson = async (req, res) => {
   try {
     const updatePayload = { ...(req.body || {}) };
 
+    if (Object.prototype.hasOwnProperty.call(updatePayload, 'videoUid')) {
+      try {
+        const normalizedVideoUid = normalizeCloudflareVideoUid(updatePayload.videoUid);
+        delete updatePayload.videoUid;
+
+        if (normalizedVideoUid) {
+          updatePayload.videoProvider = 'cloudflare';
+          updatePayload.videoUid = normalizedVideoUid;
+          updatePayload.videoUrl = buildCloudflareVideoUrl(normalizedVideoUid);
+          updatePayload.videoType = 'external';
+          updatePayload.hlsKey = '';
+          updatePayload.hlsRenditions = [];
+        }
+      } catch (error) {
+        return res.status(400).json({ success: false, message: error.message });
+      }
+    }
+
     if (Object.prototype.hasOwnProperty.call(updatePayload, 'videoUrl')) {
       try {
         updatePayload.videoUrl = normalizeVideoUrl(updatePayload.videoUrl);
-        updatePayload.videoType = updatePayload.videoUrl && /^https?:\/\//i.test(updatePayload.videoUrl)
-          ? 'external'
-          : 'file';
-        updatePayload.hlsKey = '';
-        updatePayload.hlsRenditions = [];
+        if (!updatePayload.videoProvider || updatePayload.videoProvider !== 'cloudflare') {
+          updatePayload.videoProvider = updatePayload.videoUrl && /^https?:\/\//i.test(updatePayload.videoUrl)
+            ? 'external'
+            : 'local';
+          updatePayload.videoUid = '';
+          updatePayload.videoType = updatePayload.videoUrl && /^https?:\/\//i.test(updatePayload.videoUrl)
+            ? 'external'
+            : 'file';
+          updatePayload.hlsKey = '';
+          updatePayload.hlsRenditions = [];
+        }
       } catch (error) {
         return res.status(400).json({ success: false, message: error.message });
       }

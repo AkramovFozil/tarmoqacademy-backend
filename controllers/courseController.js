@@ -144,6 +144,8 @@ const getCourseById = async (req, res) => {
         lessonsWithProgress.push({
           id: lesson._id,
           title: lesson.title,
+          videoProvider: canAccessLesson ? lesson.videoProvider : '',
+          videoUid: canAccessLesson ? lesson.videoUid : '',
           videoUrl: canAccessLesson ? lesson.videoUrl : '',
           videoType: canAccessLesson ? lesson.videoType : '',
           videoStreamUrl: canAccessLesson && lesson.videoType === 'hls'

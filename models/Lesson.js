@@ -16,6 +16,16 @@ const lessonSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    videoProvider: {
+      type: String,
+      enum: ['local', 'external', 'cloudflare', 'hls'],
+      default: 'local',
+    },
+    videoUid: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     videoType: {
       type: String,
       enum: ['file', 'external', 'hls'],
