@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const Course = require('../models/Course');
 const Module = require('../models/Module');
@@ -33,6 +34,87 @@ const buildUploadPath = (file) => {
   return `${folder}/${file.filename}`;
 };
 
+const ACTIVE_ACTIVITY_DAYS = 14;
+
+const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ''));
+
+const normalizePaymentStatus = (status, fallback = 'paid') => {
+  return status === 'pending' || status === 'paid' ? status : fallback;
+};
+
+const getCourseLessonIds = async (courseId) => {
+  const modules = await Module.find({ courseId }).select('_id');
+  const moduleIds = modules.map((module) => module._id);
+  const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).select('_id');
+  return lessons.map((lesson) => lesson._id);
+};
+
+const syncManualCourseAccess = async ({ user, course, paymentStatus }) => {
+  const status = normalizePaymentStatus(paymentStatus, 'paid');
+  user.enrolledCourses = user.enrolledCourses || [];
+  user.purchasedCourses = user.purchasedCourses || [];
+  const hasEnrollment = user.enrolledCourses.some((id) => id.toString() === course._id.toString());
+  const hasPurchaseAccess = user.purchasedCourses.some((id) => id.toString() === course._id.toString());
+
+  if (!hasEnrollment) user.enrolledCourses.push(course._id);
+  if (status === 'paid' && !hasPurchaseAccess) user.purchasedCourses.push(course._id);
+  if (status === 'pending' && hasPurchaseAccess) {
+    user.purchasedCourses = user.purchasedCourses.filter((id) => id.toString() !== course._id.toString());
+  }
+
+  await user.save();
+
+  const purchaseUpdate = {
+    userId: user._id,
+    courseId: course._id,
+    amount: Number(course.price) >= 0 ? Number(course.price) : 0,
+    status,
+    paidAt: status === 'paid' ? new Date() : null,
+  };
+
+  await Purchase.findOneAndUpdate(
+    { userId: user._id, courseId: course._id },
+    purchaseUpdate,
+    { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true }
+  );
+};
+
+const buildCourseUserRow = async ({ user, courseId, purchase, totalLessons, lessonIds }) => {
+  const [progressDoc, completedCount] = await Promise.all([
+    UserProgress.findOne({ userId: user._id, courseId }).select('lastViewedAt updatedAt completedLessons'),
+    Progress.countDocuments({
+      userId: user._id,
+      courseId,
+      lessonId: { $in: lessonIds },
+      completed: true,
+    }),
+  ]);
+
+  const completedFromUserProgress = (progressDoc?.completedLessons || [])
+    .map((id) => id.toString())
+    .filter((id) => lessonIds.some((lessonId) => lessonId.toString() === id)).length;
+  const completedLessons = Math.max(completedCount, completedFromUserProgress);
+  const progress = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+  const addedAt = purchase?.createdAt || user.createdAt;
+  const lastActivity = progressDoc?.lastViewedAt || progressDoc?.updatedAt || purchase?.paidAt || purchase?.updatedAt || null;
+  const activeSince = new Date(Date.now() - ACTIVE_ACTIVITY_DAYS * 24 * 60 * 60 * 1000);
+  const isActive = Boolean(lastActivity && new Date(lastActivity) >= activeSince);
+
+  return {
+    userId: user._id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone || '',
+    addedAt,
+    paymentStatus: purchase?.status || 'manual',
+    progress,
+    completedLessons,
+    totalLessons,
+    lastActivity,
+    activityStatus: isActive ? 'active' : 'inactive',
+  };
+};
+
 // ─── USERS ────────────────────────────────────────────────────────────────────
 
 // @desc    Get all users
@@ -50,7 +132,7 @@ const getUsers = async (req, res) => {
 // @route   POST /api/admin/users
 const createUser = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, phone } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'name, email va password majburiy.' });
@@ -65,13 +147,45 @@ const createUser = async (req, res) => {
       name,
       email,
       password,
+      phone: phone || '',
       role: role === 'admin' ? 'admin' : 'student',
     });
 
     res.status(201).json({
       success: true,
       message: 'Foydalanuvchi yaratildi.',
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt },
+      user: { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role, createdAt: user.createdAt },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Update user profile fields from admin
+// @route   PUT /api/admin/users/:id
+const updateUser = async (req, res) => {
+  try {
+    const { name, email, phone, role } = req.body;
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ success: false, message: 'Foydalanuvchi topilmadi.' });
+
+    if (email && email !== user.email) {
+      const exists = await User.findOne({ email, _id: { $ne: user._id } });
+      if (exists) {
+        return res.status(400).json({ success: false, message: 'Bu email boshqa foydalanuvchida mavjud.' });
+      }
+      user.email = email;
+    }
+
+    if (name) user.name = name;
+    if (typeof phone !== 'undefined') user.phone = phone;
+    if (role && (role === 'student' || role === 'admin')) user.role = role;
+
+    await user.save();
+    res.json({
+      success: true,
+      message: 'Foydalanuvchi yangilandi.',
+      user: { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role },
     });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -256,6 +370,164 @@ const deleteCourse = async (req, res) => {
   }
 };
 
+// @desc    Get users attached to a course with payment/progress metadata
+// @route   GET /api/admin/courses/:courseId/users
+const getCourseUsers = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { search = '', activity = 'all' } = req.query;
+
+    if (!isValidObjectId(courseId)) {
+      return res.status(400).json({ success: false, message: 'courseId noto\'g\'ri.' });
+    }
+
+    const course = await Course.findById(courseId).select('title price');
+    if (!course) return res.status(404).json({ success: false, message: 'Kurs topilmadi.' });
+
+    const purchases = await Purchase.find({ courseId });
+    const purchaseMap = new Map(purchases.map((purchase) => [purchase.userId.toString(), purchase]));
+    const purchaseUserIds = purchases.map((purchase) => purchase.userId);
+
+    const userQuery = {
+      role: 'student',
+      $or: [
+        { enrolledCourses: course._id },
+        { purchasedCourses: course._id },
+        { _id: { $in: purchaseUserIds } },
+      ],
+    };
+
+    const term = String(search || '').trim();
+    if (term) {
+      const regex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      userQuery.$and = [{ $or: [{ name: regex }, { email: regex }, { phone: regex }] }];
+    }
+
+    const users = await User.find(userQuery).select('name email phone role createdAt enrolledCourses purchasedCourses').sort({ createdAt: -1 });
+    const lessonIds = await getCourseLessonIds(course._id);
+    const rows = await Promise.all(
+      users.map((user) => buildCourseUserRow({
+        user,
+        courseId: course._id,
+        purchase: purchaseMap.get(user._id.toString()),
+        totalLessons: lessonIds.length,
+        lessonIds,
+      }))
+    );
+
+    const filteredRows = rows.filter((row) => activity === 'active' || activity === 'inactive'
+      ? row.activityStatus === activity
+      : true);
+
+    res.json({
+      success: true,
+      course: { id: course._id, title: course.title },
+      count: filteredRows.length,
+      users: filteredRows,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Add a student to a course manually
+// @route   POST /api/admin/courses/:courseId/users
+const addCourseUser = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { userId, email, paymentStatus } = req.body;
+
+    if (!isValidObjectId(courseId)) {
+      return res.status(400).json({ success: false, message: 'courseId noto\'g\'ri.' });
+    }
+
+    const course = await Course.findById(courseId).select('title price');
+    if (!course) return res.status(404).json({ success: false, message: 'Kurs topilmadi.' });
+
+    const user = userId
+      ? await User.findById(userId)
+      : await User.findOne({ email: String(email || '').trim().toLowerCase() });
+
+    if (!user || user.role !== 'student') {
+      return res.status(404).json({ success: false, message: 'Talaba topilmadi.' });
+    }
+
+    await syncManualCourseAccess({ user, course, paymentStatus });
+    res.status(201).json({ success: true, message: `"${course.title}" kursiga ${user.name} qo'shildi.` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Update a course user and payment status
+// @route   PUT /api/admin/courses/:courseId/users/:userId
+const updateCourseUser = async (req, res) => {
+  try {
+    const { courseId, userId } = req.params;
+    const { name, email, phone, paymentStatus } = req.body;
+
+    if (!isValidObjectId(courseId) || !isValidObjectId(userId)) {
+      return res.status(400).json({ success: false, message: 'courseId yoki userId noto\'g\'ri.' });
+    }
+
+    const [course, user] = await Promise.all([
+      Course.findById(courseId).select('title price'),
+      User.findById(userId),
+    ]);
+
+    if (!course) return res.status(404).json({ success: false, message: 'Kurs topilmadi.' });
+    if (!user) return res.status(404).json({ success: false, message: 'Foydalanuvchi topilmadi.' });
+
+    if (email && email !== user.email) {
+      const exists = await User.findOne({ email, _id: { $ne: user._id } });
+      if (exists) return res.status(400).json({ success: false, message: 'Bu email boshqa foydalanuvchida mavjud.' });
+      user.email = email;
+    }
+
+    if (name) user.name = name;
+    if (typeof phone !== 'undefined') user.phone = phone;
+
+    await syncManualCourseAccess({ user, course, paymentStatus });
+    res.json({ success: true, message: 'Kurs foydalanuvchisi yangilandi.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Remove user from course
+// @route   DELETE /api/admin/courses/:courseId/users/:userId
+const removeCourseUser = async (req, res) => {
+  try {
+    const { courseId, userId } = req.params;
+
+    if (!isValidObjectId(courseId) || !isValidObjectId(userId)) {
+      return res.status(400).json({ success: false, message: 'courseId yoki userId noto\'g\'ri.' });
+    }
+
+    const course = await Course.findById(courseId).select('title');
+    if (!course) return res.status(404).json({ success: false, message: 'Kurs topilmadi.' });
+
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { $pull: { enrolledCourses: course._id, purchasedCourses: course._id } },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ success: false, message: 'Foydalanuvchi topilmadi.' });
+
+    const lessonIds = await getCourseLessonIds(course._id);
+    await Promise.all([
+      Purchase.deleteOne({ userId, courseId: course._id }),
+      UserProgress.deleteOne({ userId, courseId: course._id }),
+      Progress.deleteMany({ userId, courseId: course._id }),
+      TaskSubmission.deleteMany({ userId, lessonId: { $in: lessonIds } }),
+    ]);
+
+    res.json({ success: true, message: `${user.name} "${course.title}" kursidan olib tashlandi.` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // ─── DASHBOARD STATS ──────────────────────────────────────────────────────────
 
 // @desc    Admin dashboard summary stats
@@ -350,4 +622,20 @@ const uploadCertificate = async (req, res) => {
   }
 };
 
-module.exports = { getUsers, createUser, deleteUser, getCourses, createCourse, updateCourse, deleteCourse, getStats, assignCourseToUser, uploadCertificate };
+module.exports = {
+  getUsers,
+  createUser,
+  updateUser,
+  deleteUser,
+  getCourses,
+  createCourse,
+  updateCourse,
+  deleteCourse,
+  getCourseUsers,
+  addCourseUser,
+  updateCourseUser,
+  removeCourseUser,
+  getStats,
+  assignCourseToUser,
+  uploadCertificate,
+};
