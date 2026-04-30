@@ -2,6 +2,7 @@ const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Progress = require('../models/Progress');
 const TaskSubmission = require('../models/TaskSubmission');
+const { notifyCourseUsers, safeNotify } = require('../services/notificationService');
 const {
   getPreviewLessonKey,
   isUserEnrolledInCourse,
@@ -206,6 +207,13 @@ const createLesson = async (req, res) => {
       duration,
       order,
     });
+
+    safeNotify(() => notifyCourseUsers({
+      courseId: module.courseId,
+      title: 'Yangi dars qo\'shildi',
+      message: `"${lesson.title}" darsi qo'shildi.`,
+      type: 'lesson_created',
+    }));
 
     res.status(201).json({
       success: true,

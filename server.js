@@ -20,6 +20,7 @@ const aiRoutes = require('./routes/aiRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
 const videoRoutes = require('./routes/video.routes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const authMiddleware = require('./middleware/authMiddleware');
 const { getMyCourses } = require('./controllers/userController');
 const { getUserStats } = require('./controllers/progressController');
@@ -92,6 +93,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, message: 'API working' });

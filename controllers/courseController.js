@@ -119,7 +119,7 @@ const getCourseById = async (req, res) => {
       userId: req.user._id,
       lessonId: { $in: courseLessonDocs.map((lesson) => lesson._id) },
     })
-      .select('lessonId answer attachmentName fileUrl attachmentSize status reviewedAt reviewedBy reviewNote createdAt updatedAt')
+        .select('lessonId answer attachmentName fileUrl attachmentSize telegramSubmitted telegramUsername screenshotUrl status reviewedAt reviewedBy reviewNote createdAt updatedAt')
       .populate('reviewedBy', 'name email');
     const taskSubmissionMap = new Map(
       taskSubmissions.map((submission) => [
@@ -163,6 +163,9 @@ const getCourseById = async (req, res) => {
           taskAttachmentName: canAccessLesson ? taskSubmission?.attachmentName || '' : '',
           taskFileUrl: canAccessLesson ? taskSubmission?.fileUrl || '' : '',
           taskAttachmentSize: canAccessLesson ? taskSubmission?.attachmentSize || 0 : 0,
+          telegramSubmitted: canAccessLesson ? Boolean(taskSubmission?.telegramSubmitted) : false,
+          telegramUsername: canAccessLesson ? taskSubmission?.telegramUsername || '' : '',
+          taskScreenshotUrl: canAccessLesson ? taskSubmission?.screenshotUrl || '' : '',
           submissionId: canAccessLesson ? taskSubmission?._id || '' : '',
           submissionStatus: canAccessLesson
             ? taskSubmission?.status || (taskSubmission ? 'pending' : null)

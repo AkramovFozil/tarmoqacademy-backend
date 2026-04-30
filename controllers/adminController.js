@@ -9,6 +9,7 @@ const Purchase = require('../models/Purchase');
 const UserProgress = require('../models/UserProgress');
 const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
+const { notifyStudents, safeNotify } = require('../services/notificationService');
 
 const normalizePrice = (rawValue, fallback = 99000) => {
   const value = Number(rawValue);
@@ -271,6 +272,12 @@ const createCourse = async (req, res) => {
       isPublished: normalizePublished(isPublished, true),
       instructor: req.user._id,
     });
+
+    safeNotify(() => notifyStudents({
+      title: 'Yangi kurs qo\'shildi',
+      message: `"${course.title}" kursi platformaga qo'shildi.`,
+      type: 'course_created',
+    }));
 
     res.status(201).json({
       success: true,

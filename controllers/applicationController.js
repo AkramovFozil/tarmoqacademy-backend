@@ -1,4 +1,5 @@
 const Application = require('../models/Application');
+const { notifyAdmins, safeNotify } = require('../services/notificationService');
 
 const ALLOWED_STATUSES = new Set(['new', 'contacted', 'approved']);
 
@@ -23,6 +24,12 @@ const createApplication = async (req, res) => {
       phone: normalizedPhone,
       course: normalizedCourse,
     });
+
+    safeNotify(() => notifyAdmins({
+      title: 'User support message yubordi',
+      message: `${normalizedName} ${normalizedSurname} ${normalizedCourse ? `"${normalizedCourse}" bo'yicha` : ''} murojaat qoldirdi.`,
+      type: 'admin_support_message',
+    }));
 
     return res.status(201).json({
       success: true,

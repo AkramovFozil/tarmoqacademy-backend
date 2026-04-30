@@ -1,6 +1,7 @@
 const Purchase = require('../models/Purchase');
 const User = require('../models/User');
 const Course = require('../models/Course');
+const { createNotification, notifyAdmins, safeNotify } = require('../services/notificationService');
 
 const DEFAULT_PURCHASE_AMOUNT = 99000;
 
@@ -124,6 +125,17 @@ const createPurchase = async (req, res) => {
 
     if (purchase.status === 'paid') {
       await grantCourseAccess(user, course._id);
+      safeNotify(() => createNotification({
+        userId: user._id,
+        title: 'Payment tasdiqlandi',
+        message: `"${course.title}" kursi uchun to'lov tasdiqlandi.`,
+        type: 'payment_approved',
+      }));
+      safeNotify(() => notifyAdmins({
+        title: 'Yangi payment request',
+        message: `${user.name} "${course.title}" kursi uchun to'lov qildi.`,
+        type: 'admin_payment_request',
+      }));
     }
 
     return res.status(201).json({

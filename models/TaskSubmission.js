@@ -31,6 +31,20 @@ const taskSubmissionSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    telegramSubmitted: {
+      type: Boolean,
+      default: false,
+    },
+    telegramUsername: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    screenshotUrl: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected'],

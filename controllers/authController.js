@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { notifyAdmins, safeNotify } = require('../services/notificationService');
 
 // Generate JWT token
 const generateToken = (id) => {
@@ -50,6 +51,12 @@ const register = async (req, res) => {
     });
 
     const token = generateToken(user._id);
+
+    safeNotify(() => notifyAdmins({
+      title: 'Yangi user ro\'yxatdan o\'tdi',
+      message: `${user.name} platformaga ro'yxatdan o'tdi.`,
+      type: 'admin_new_user',
+    }));
 
     res.status(201).json({
       success: true,

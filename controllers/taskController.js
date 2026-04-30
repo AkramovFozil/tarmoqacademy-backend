@@ -5,6 +5,7 @@ const Progress = require('../models/Progress');
 const TaskSubmission = require('../models/TaskSubmission');
 const User = require('../models/User');
 const UserProgress = require('../models/UserProgress');
+const { createNotification, notifyAdmins, safeNotify } = require('../services/notificationService');
 
 const buildTaskFileUrl = (file) => (file ? `/uploads/tasks/${file.filename}` : '');
 
@@ -78,6 +79,9 @@ const serializeSubmission = (submission) => {
     attachmentName: submission.attachmentName || '',
     fileUrl: submission.fileUrl || '',
     attachmentSize: submission.attachmentSize || 0,
+    telegramSubmitted: Boolean(submission.telegramSubmitted),
+    telegramUsername: submission.telegramUsername || '',
+    screenshotUrl: submission.screenshotUrl || '',
     status: submission.status || 'pending',
     submittedAt: submission.createdAt,
     updatedAt: submission.updatedAt,
@@ -109,15 +113,25 @@ const populateSubmissionQuery = (query) =>
 // @access  Private
 const submitTaskAnswer = async (req, res) => {
   try {
-    const { lessonId, answer } = req.body;
+    const { lessonId, answer, telegramSubmitted, telegramUsername } = req.body;
     const uploadedFile = req.file || null;
+    const isTelegramSubmission = telegramSubmitted === true || telegramSubmitted === 'true' || telegramSubmitted === '1';
+    const normalizedAnswer = String(answer || '').trim();
+    const normalizedTelegramUsername = String(telegramUsername || '').trim().replace(/^@+/, '');
 
     console.debug('[task.submit] req.file', uploadedFile);
 
-    if (!lessonId || !String(answer || '').trim()) {
+    if (!lessonId || !normalizedAnswer) {
       return res.status(400).json({
         success: false,
-        message: 'lessonId va answer majburiy.',
+        message: 'lessonId va comment/javob majburiy.',
+      });
+    }
+
+    if (isTelegramSubmission && !normalizedTelegramUsername) {
+      return res.status(400).json({
+        success: false,
+        message: 'Telegram username majburiy.',
       });
     }
 
@@ -137,25 +151,36 @@ const submitTaskAnswer = async (req, res) => {
       userId: req.user._id,
       lessonId,
     });
-    const fileUrl = uploadedFile
-      ? buildTaskFileUrl(uploadedFile)
+    const uploadedFileUrl = uploadedFile ? buildTaskFileUrl(uploadedFile) : '';
+    const fileUrl = uploadedFile && !isTelegramSubmission
+      ? uploadedFileUrl
       : existingSubmission?.fileUrl || '';
-    const attachmentName = uploadedFile
+    const screenshotUrl = uploadedFile && isTelegramSubmission
+      ? uploadedFileUrl
+      : existingSubmission?.screenshotUrl || '';
+    const attachmentName = uploadedFile && !isTelegramSubmission
       ? String(uploadedFile.originalname || '').trim()
       : existingSubmission?.attachmentName || '';
-    const attachmentSize = uploadedFile
+    const attachmentSize = uploadedFile && !isTelegramSubmission
       ? Number(uploadedFile.size || 0)
       : Number(existingSubmission?.attachmentSize || 0);
+    const screenshotName = uploadedFile && isTelegramSubmission
+      ? String(uploadedFile.originalname || '').trim()
+      : existingSubmission?.attachmentName || '';
 
     const submission = await TaskSubmission.findOneAndUpdate(
       { userId: req.user._id, lessonId },
       {
         userId: req.user._id,
         lessonId,
-        answer: String(answer).trim(),
+        answer: normalizedAnswer,
         attachmentName,
         fileUrl,
         attachmentSize: Number.isFinite(attachmentSize) ? attachmentSize : 0,
+        telegramSubmitted: isTelegramSubmission,
+        telegramUsername: isTelegramSubmission ? normalizedTelegramUsername : '',
+        screenshotUrl: isTelegramSubmission ? screenshotUrl : '',
+        ...(isTelegramSubmission && screenshotName ? { attachmentName: screenshotName } : {}),
         status: 'pending',
         reviewedAt: null,
         reviewedBy: null,
@@ -177,6 +202,14 @@ const submitTaskAnswer = async (req, res) => {
       ),
     ]);
 
+    safeNotify(() => notifyAdmins({
+      title: isTelegramSubmission ? 'Telegram homework yuborildi' : 'User topshiriq yubordi',
+      message: isTelegramSubmission
+        ? `${req.user.name || 'Talaba'} Telegram orqali topshiriq topshirdi.`
+        : `${req.user.name || 'Talaba'} ${context.course.title} kursida "${context.lesson.title}" topshirig'ini yubordi.`,
+      type: isTelegramSubmission ? 'admin_telegram_homework' : 'admin_homework_submitted',
+    }));
+
     return res.status(200).json({
       success: true,
       message: 'Topshiriq javobi saqlandi.',
@@ -188,6 +221,9 @@ const submitTaskAnswer = async (req, res) => {
         attachmentName: submission.attachmentName || '',
         fileUrl: submission.fileUrl || '',
         attachmentSize: submission.attachmentSize || 0,
+        telegramSubmitted: Boolean(submission.telegramSubmitted),
+        telegramUsername: submission.telegramUsername || '',
+        screenshotUrl: submission.screenshotUrl || '',
         status: submission.status,
         reviewedAt: submission.reviewedAt,
         reviewedBy: '',
@@ -303,6 +339,15 @@ const reviewTaskSubmission = async (req, res) => {
         { $pull: { completedLessons: lesson._id } }
       );
     }
+
+    safeNotify(() => createNotification({
+      userId: submission.userId,
+      title: status === 'approved' ? 'Homework approved' : 'Homework rejected',
+      message: status === 'approved'
+        ? 'Topshirig\'ingiz tasdiqlandi.'
+        : 'Topshirig\'ingiz rad etildi. Izohni ko\'rib, qayta yuboring.',
+      type: status === 'approved' ? 'homework_approved' : 'homework_rejected',
+    }));
 
     const populated = await populateSubmissionQuery(TaskSubmission.findById(submission._id));
 
