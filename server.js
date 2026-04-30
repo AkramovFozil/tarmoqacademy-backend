@@ -16,7 +16,6 @@ const certificateRoutes = require('./routes/certificateRoutes');
 const purchaseRoutes = require('./routes/purchaseRoutes');
 const purchasesRoutes = require('./routes/purchasesRoutes');
 const taskRoutes = require('./routes/taskRoutes');
-const aiRoutes = require('./routes/aiRoutes');
 const categoryRoutes = require('./routes/categoryRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
 const videoRoutes = require('./routes/video.routes');
@@ -89,7 +88,7 @@ app.use('/api/user', userRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/certificate', certificateRoutes);
 app.use('/api/tasks', taskRoutes);
-app.use('/api/ai', aiRoutes);
+// AI assistant temporarily disabled until API key ready.
 app.use('/api/admin', adminRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/videos', videoRoutes);

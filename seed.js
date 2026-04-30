@@ -111,7 +111,7 @@ const courseBlueprint = {
           title: 'Personal assistant',
           duration: 28,
           content:
-            "Vazifa boshqaruvi, javob shablonlari va shaxsiy samaradorlik uchun AI assistant yigish.",
+            "Vazifa boshqaruvi, javob shablonlari va shaxsiy samaradorlik uchun avtomatlashtirilgan ish oqimlarini yigish.",
         },
         {
           title: 'Website',
