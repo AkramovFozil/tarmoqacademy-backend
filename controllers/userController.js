@@ -28,8 +28,19 @@ const getMyCourses = async (req, res) => {
 
       const modules = await Module.find({ courseId: course._id }).select('_id');
       const moduleIds = modules.map((module) => module._id);
-      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
-      const allowedLessons = (user.offlineAccess?.allowedLessons || []).length;
+      const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).select('_id');
+      const totalLessons = lessons.length;
+      const allowedLessonIds = (user.offlineAccess?.allowedLessons || []).map((id) => id.toString());
+      const allowedLessons = allowedLessonIds.length;
+      const lessonIds = lessons.map((lesson) => lesson._id);
+      const completedLessons = await Progress.countDocuments({
+        userId: req.user._id,
+        lessonId: { $in: lessonIds.filter((id) => allowedLessonIds.includes(id.toString())) },
+        completed: true,
+      });
+      const progress = allowedLessons > 0
+        ? Math.round((completedLessons / allowedLessons) * 100)
+        : 0;
 
       return res.json({
         success: true,
@@ -46,7 +57,7 @@ const getMyCourses = async (req, res) => {
           offlineStatus: user.offlineStatus || 'active',
           allowedLessons,
           previewAvailable: false,
-          progress: 0,
+          progress,
           isCompleted: false,
         }],
       });

@@ -4,7 +4,7 @@ const path = require('path');
 const jwt = require('jsonwebtoken');
 const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
-const { isOfflineLessonAllowed, isUserEnrolledInCourse, getPreviewLessonKey } = require('../utils/lessonVideo');
+const { getOfflineLessonAccess, isUserEnrolledInCourse, getPreviewLessonKey } = require('../utils/lessonVideo');
 const { transcodeToHls } = require('../services/videoTranscoder');
 const {
   normalizeKey,
@@ -30,7 +30,10 @@ const canAccessLesson = async (user, lesson) => {
   if (!lesson?.moduleId?.courseId) return false;
   const hasFullAccess = isUserEnrolledInCourse(user, lesson.moduleId.courseId);
   if (hasFullAccess) return true;
-  if (isOfflineLessonAllowed(user, lesson.moduleId.courseId, lesson._id)) return true;
+  if (user?.role === 'offline_student') {
+    const offlineAccess = await getOfflineLessonAccess(user, lesson.moduleId.courseId, lesson._id);
+    return offlineAccess.allowed && !offlineAccess.locked;
+  }
 
   const previewLessonKey = await getPreviewLessonKey(lesson.moduleId.courseId);
   return previewLessonKey === lesson._id.toString();

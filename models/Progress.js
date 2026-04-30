@@ -21,6 +21,27 @@ const progressSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    watchPercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    status: {
+      type: String,
+      enum: ['not_started', 'started', 'in_progress', 'completed'],
+      default: 'not_started',
+    },
+    lastPosition: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    duration: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     completedAt: {
       type: Date,
       default: Date.now,

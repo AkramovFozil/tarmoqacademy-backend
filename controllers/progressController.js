@@ -4,7 +4,7 @@ const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Course = require('../models/Course');
 const User = require('../models/User');
-const { isOfflineCourseActive, isOfflineLessonAllowed } = require('../utils/lessonVideo');
+const { getOfflineLessonAccess, isOfflineCourseActive, isOfflineLessonAllowed } = require('../utils/lessonVideo');
 
 const toDayKey = (date) => {
   const value = new Date(date);
@@ -29,6 +29,101 @@ const getCourseLessonContext = async (lessonId) => {
     lesson,
     courseId: lesson.moduleId.courseId,
   };
+};
+
+const normalizeWatchPercent = (value) => {
+  const percent = Number(value || 0);
+  if (!Number.isFinite(percent)) return 0;
+  return Math.max(0, Math.min(100, Math.round(percent)));
+};
+
+const statusFromPercent = (percent) => {
+  if (percent >= 85) return 'completed';
+  if (percent >= 60) return 'in_progress';
+  if (percent >= 25) return 'started';
+  return 'not_started';
+};
+
+// @desc    Update lesson watch progress
+// @route   POST /api/progress/update
+// @access  Private
+const updateLessonProgress = async (req, res) => {
+  try {
+    const { lessonId, currentTime, duration, percent } = req.body || {};
+
+    if (!lessonId) {
+      return res.status(400).json({ success: false, message: 'lessonId majburiy.' });
+    }
+
+    const lessonContext = await getCourseLessonContext(lessonId);
+    if (!lessonContext) {
+      return res.status(404).json({ success: false, message: 'Dars topilmadi.' });
+    }
+
+    const { lesson, courseId } = lessonContext;
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+    const normalizedDuration = Math.max(0, Number(duration || 0));
+    const normalizedPosition = Math.max(0, Number(currentTime || 0));
+    const computedPercent = normalizedDuration > 0
+      ? (normalizedPosition / normalizedDuration) * 100
+      : Number(percent || 0);
+    const watchPercent = normalizeWatchPercent(Math.max(Number(percent || 0), computedPercent));
+    const completed = watchPercent >= 85;
+    const status = statusFromPercent(watchPercent);
+
+    if (user?.role === 'offline_student') {
+      const access = await getOfflineLessonAccess(user, courseId, lesson._id);
+      if (!access.allowed || access.locked) {
+        return res.status(403).json({
+          success: false,
+          message: access.message || 'Bu dars hali administrator tomonidan ochilmagan.',
+        });
+      }
+
+      const progress = await Progress.findOneAndUpdate(
+        { userId: req.user._id, lessonId: lesson._id },
+        {
+          userId: req.user._id,
+          lessonId: lesson._id,
+          courseId,
+          completed,
+          completedAt: completed ? new Date() : null,
+          watchPercent,
+          status,
+          lastPosition: normalizedPosition,
+          duration: normalizedDuration,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      return res.status(200).json({
+        success: true,
+        offlineMode: true,
+        lessonId: lesson._id,
+        courseId,
+        watchPercent: progress.watchPercent,
+        status: progress.status,
+        completed: progress.completed,
+        lastPosition: progress.lastPosition,
+        duration: progress.duration,
+      });
+    }
+
+    if (!hasCourseAccess(user, courseId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bu kurs sizga ochilmagan.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      offlineMode: false,
+      ignored: true,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
 };
 
 // @desc    Mark a lesson as completed
@@ -194,11 +289,17 @@ const markLessonViewed = async (req, res) => {
 const getUserStats = async (req, res) => {
   try {
     if (req.user?.role === 'offline_student') {
+      const activeCourses = req.user.offlineAccess?.courseId ? 1 : 0;
+      const completed = await Progress.countDocuments({
+        userId: req.user._id,
+        completed: true,
+      });
+
       return res.status(200).json({
         success: true,
         stats: {
-          activeCourses: req.user.offlineAccess?.courseId ? 1 : 0,
-          totalCompleted: 0,
+          activeCourses,
+          totalCompleted: completed,
           streak: 0,
           courses: [],
           offlineMode: true,
@@ -295,14 +396,31 @@ const getCourseProgress = async (req, res) => {
     if (user?.role === 'offline_student' && isOfflineCourseActive(user, courseId)) {
       const modules = await Module.find({ courseId }).select('_id');
       const moduleIds = modules.map((m) => m._id);
-      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
+      const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).select('_id');
+      const totalLessons = lessons.length;
+      const lessonIds = lessons.map((lesson) => lesson._id);
+      const allowedLessonIds = (user.offlineAccess?.allowedLessons || []).map((id) => id.toString());
+      const progressRows = await Progress.find({
+        userId: req.user._id,
+        lessonId: { $in: lessonIds.filter((id) => allowedLessonIds.includes(id.toString())) },
+      }).select('lessonId completed watchPercent status lastPosition duration');
+      const completedRows = progressRows.filter((row) => row.completed || Number(row.watchPercent || 0) >= 85);
+      const allowedTotal = allowedLessonIds.length;
       return res.status(200).json({
         success: true,
         courseId,
-        progress: 0,
-        completedLessons: 0,
+        progress: allowedTotal > 0 ? Math.round((completedRows.length / allowedTotal) * 100) : 0,
+        completedLessons: completedRows.length,
         totalLessons,
-        completedLessonIds: [],
+        completedLessonIds: completedRows.map((row) => row.lessonId.toString()),
+        lessonProgress: progressRows.map((row) => ({
+          lessonId: row.lessonId.toString(),
+          completed: row.completed,
+          watchPercent: row.watchPercent || 0,
+          status: row.status || 'not_started',
+          lastPosition: row.lastPosition || 0,
+          duration: row.duration || 0,
+        })),
         lastLessonId: null,
         lastViewedAt: null,
         offlineMode: true,
@@ -360,14 +478,31 @@ const getUserProgressByCourse = async (req, res) => {
     if (user?.role === 'offline_student' && isOfflineCourseActive(user, courseId)) {
       const modules = await Module.find({ courseId }).select('_id');
       const moduleIds = modules.map((module) => module._id);
-      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
+      const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).select('_id');
+      const totalLessons = lessons.length;
+      const lessonIds = lessons.map((lesson) => lesson._id);
+      const allowedLessonIds = (user.offlineAccess?.allowedLessons || []).map((id) => id.toString());
+      const progressRows = await Progress.find({
+        userId: req.user._id,
+        lessonId: { $in: lessonIds.filter((id) => allowedLessonIds.includes(id.toString())) },
+      }).select('lessonId completed watchPercent status lastPosition duration');
+      const completedRows = progressRows.filter((row) => row.completed || Number(row.watchPercent || 0) >= 85);
+      const allowedTotal = allowedLessonIds.length;
       return res.status(200).json({
         success: true,
         courseId,
-        progress: 0,
-        completedLessons: [],
+        progress: allowedTotal > 0 ? Math.round((completedRows.length / allowedTotal) * 100) : 0,
+        completedLessons: completedRows.map((row) => row.lessonId.toString()),
         totalLessons,
-        completedCount: 0,
+        completedCount: completedRows.length,
+        lessonProgress: progressRows.map((row) => ({
+          lessonId: row.lessonId.toString(),
+          completed: row.completed,
+          watchPercent: row.watchPercent || 0,
+          status: row.status || 'not_started',
+          lastPosition: row.lastPosition || 0,
+          duration: row.duration || 0,
+        })),
         lastLessonId: null,
         lastViewedAt: null,
         offlineMode: true,
@@ -416,4 +551,4 @@ const getUserProgressByCourse = async (req, res) => {
   }
 };
 
-module.exports = { completeLesson, markLessonViewed, getUserStats, getCourseProgress, getUserProgressByCourse };
+module.exports = { completeLesson, markLessonViewed, updateLessonProgress, getUserStats, getCourseProgress, getUserProgressByCourse };

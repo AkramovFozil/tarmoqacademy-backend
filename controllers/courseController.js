@@ -9,8 +9,8 @@ const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
 const {
   getPreviewLessonKey,
+  getOfflineLessonAccess,
   isOfflineCourseActive,
-  isOfflineLessonAllowed,
   isUserEnrolledInCourse,
 } = require('../utils/lessonVideo');
 
@@ -53,7 +53,15 @@ const getCourses = async (req, res) => {
 
       const modules = await Module.find({ courseId: course._id }).select('_id');
       const moduleIds = modules.map((module) => module._id);
-      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
+      const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).select('_id');
+      const totalLessons = lessons.length;
+      const allowedLessonIds = (user.offlineAccess?.allowedLessons || []).map((id) => id.toString());
+      const completedLessons = await Progress.countDocuments({
+        userId: req.user._id,
+        lessonId: { $in: lessons.map((lesson) => lesson._id).filter((id) => allowedLessonIds.includes(id.toString())) },
+        completed: true,
+      });
+      const progress = allowedLessonIds.length > 0 ? Math.round((completedLessons / allowedLessonIds.length) * 100) : 0;
 
       return res.status(200).json({
         success: true,
@@ -66,10 +74,10 @@ const getCourses = async (req, res) => {
           price: 0,
           category: course.category,
           totalLessons,
-          progress: 0,
+          progress,
           purchased: user.offlineStatus === 'active',
           offlineMode: true,
-          allowedLessons: (user.offlineAccess?.allowedLessons || []).length,
+          allowedLessons: allowedLessonIds.length,
           previewAvailable: false,
           isCompleted: false,
         }],
@@ -160,6 +168,14 @@ const getCourseById = async (req, res) => {
       : null;
     const completedLessonIds = new Set((userProgress?.completedLessons || []).map((id) => id.toString()));
     const courseLessonDocs = await Lesson.find({ moduleId: { $in: modules.map((module) => module._id) } }).select('_id');
+    const progressDocs = hasOfflineAccess
+      ? await Progress.find({
+          userId: req.user._id,
+          lessonId: { $in: courseLessonDocs.map((lesson) => lesson._id) },
+        }).select('lessonId completed watchPercent status lastPosition duration')
+      : [];
+    const progressMap = new Map(progressDocs.map((progress) => [progress.lessonId.toString(), progress]));
+
     const taskSubmissions = hasOfflineAccess ? [] : await TaskSubmission.find({
       userId: req.user._id,
       lessonId: { $in: courseLessonDocs.map((lesson) => lesson._id) },
@@ -182,10 +198,14 @@ const getCourseById = async (req, res) => {
 
       for (const lesson of lessons) {
         totalLessons += 1;
-        const offlineAllowed = isOfflineLessonAllowed(user, course._id, lesson._id);
+        const offlineAccess = hasOfflineAccess
+          ? await getOfflineLessonAccess(user, course._id, lesson._id)
+          : { allowed: false, locked: false, message: '' };
+        const offlineAllowed = offlineAccess.allowed && !offlineAccess.locked;
         const isPreviewLesson = !hasFullAccess && !hasOfflineAccess && previewLessonKey === lesson._id.toString();
         const canAccessLesson = hasFullAccess || offlineAllowed || isPreviewLesson;
         const taskSubmission = taskSubmissionMap.get(lesson._id.toString());
+        const lessonProgress = progressMap.get(lesson._id.toString());
 
         lessonsWithProgress.push({
           id: lesson._id,
@@ -201,12 +221,17 @@ const getCourseById = async (req, res) => {
           task: canAccessLesson && !hasOfflineAccess ? lesson.task : '',
           duration: lesson.duration,
           order: lesson.order,
-          completed: hasFullAccess ? completedLessonIds.has(lesson._id.toString()) : false,
-          locked: hasOfflineAccess ? !offlineAllowed : (!hasFullAccess && !isPreviewLesson),
+          completed: hasFullAccess
+            ? completedLessonIds.has(lesson._id.toString())
+            : Boolean(lessonProgress?.completed || Number(lessonProgress?.watchPercent || 0) >= 85),
+          watchPercent: hasOfflineAccess ? Number(lessonProgress?.watchPercent || 0) : 0,
+          progressStatus: hasOfflineAccess ? lessonProgress?.status || 'not_started' : '',
+          lastPosition: hasOfflineAccess ? Number(lessonProgress?.lastPosition || 0) : 0,
+          locked: hasOfflineAccess ? offlineAccess.locked : (!hasFullAccess && !isPreviewLesson),
           lockMessage: hasOfflineAccess
-            ? 'Bu dars hali administrator tomonidan ochilmagan'
+            ? offlineAccess.message || 'Bu dars hali administrator tomonidan ochilmagan'
             : undefined,
-          offlineAllowed,
+          offlineAllowed: offlineAccess.allowed,
           previewAccessible: isPreviewLesson,
           taskAnswer: canAccessLesson ? taskSubmission?.answer || '' : '',
           taskAnsweredAt: canAccessLesson ? taskSubmission?.updatedAt || null : null,
@@ -236,7 +261,17 @@ const getCourseById = async (req, res) => {
       });
     }
 
-    const progress = hasFullAccess ? await getCourseProgress(course._id, req.user._id) : 0;
+    const offlineCompletedCount = hasOfflineAccess
+      ? progressDocs.filter((row) => row.completed || Number(row.watchPercent || 0) >= 85).length
+      : 0;
+    const offlineAllowedCount = hasOfflineAccess
+      ? (user.offlineAccess?.allowedLessons || []).length
+      : 0;
+    const progress = hasFullAccess
+      ? await getCourseProgress(course._id, req.user._id)
+      : hasOfflineAccess && offlineAllowedCount > 0
+        ? Math.round((offlineCompletedCount / offlineAllowedCount) * 100)
+        : 0;
 
     res.status(200).json({
       success: true,
@@ -253,7 +288,7 @@ const getCourseById = async (req, res) => {
         previewMode: !hasFullAccess && !hasOfflineAccess,
         progress,
         totalLessons,
-        completedLessonsCount: hasFullAccess ? completedLessonIds.size : 0,
+        completedLessonsCount: hasFullAccess ? completedLessonIds.size : offlineCompletedCount,
         lastLessonId: hasFullAccess ? userProgress?.lastLessonId?.toString() || null : null,
         lastViewedAt: hasFullAccess ? userProgress?.lastViewedAt || null : null,
         modules: modulesWithLessons,

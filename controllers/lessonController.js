@@ -5,6 +5,7 @@ const TaskSubmission = require('../models/TaskSubmission');
 const { notifyCourseUsers, safeNotify } = require('../services/notificationService');
 const {
   getPreviewLessonKey,
+  getOfflineLessonAccess,
   isOfflineLessonAllowed,
   isUserEnrolledInCourse,
 } = require('../utils/lessonVideo');
@@ -84,7 +85,10 @@ const getLessonById = async (req, res) => {
     }
 
     const hasFullAccess = isUserEnrolledInCourse(req.user, lesson.moduleId.courseId);
-    const offlineAllowed = isOfflineLessonAllowed(req.user, lesson.moduleId.courseId, lesson._id);
+    const offlineAccess = req.user.role === 'offline_student'
+      ? await getOfflineLessonAccess(req.user, lesson.moduleId.courseId, lesson._id)
+      : { allowed: isOfflineLessonAllowed(req.user, lesson.moduleId.courseId, lesson._id), locked: false, message: '' };
+    const offlineAllowed = offlineAccess.allowed && !offlineAccess.locked;
     const previewLessonKey = hasFullAccess || offlineAllowed ? null : await getPreviewLessonKey(lesson.moduleId.courseId);
     const canAccessLesson = hasFullAccess || offlineAllowed || previewLessonKey === lesson._id.toString();
 
@@ -92,7 +96,7 @@ const getLessonById = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: req.user.role === 'offline_student'
-          ? 'Bu dars hali administrator tomonidan ochilmagan.'
+          ? offlineAccess.message || 'Bu dars hali administrator tomonidan ochilmagan.'
           : 'Bu dars uchun ruxsat yo\'q.',
       });
     }
