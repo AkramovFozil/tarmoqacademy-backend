@@ -9,10 +9,47 @@ const Progress = require('../models/Progress');
 const getMyCourses = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('role enrolledCourses purchasedCourses');
+      .select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User topilmadi.' });
+    }
+
+    if (user.role === 'offline_student') {
+      const courseId = user.offlineAccess?.courseId;
+      if (!courseId) {
+        return res.json({ success: true, courses: [] });
+      }
+
+      const course = await Course.findById(courseId);
+      if (!course) {
+        return res.json({ success: true, courses: [] });
+      }
+
+      const modules = await Module.find({ courseId: course._id }).select('_id');
+      const moduleIds = modules.map((module) => module._id);
+      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
+      const allowedLessons = (user.offlineAccess?.allowedLessons || []).length;
+
+      return res.json({
+        success: true,
+        courses: [{
+          id: course._id,
+          title: course.title,
+          description: course.description,
+          image: course.image,
+          price: 0,
+          category: course.category,
+          totalLessons,
+          purchased: user.offlineStatus === 'active',
+          offlineMode: true,
+          offlineStatus: user.offlineStatus || 'active',
+          allowedLessons,
+          previewAvailable: false,
+          progress: 0,
+          isCompleted: false,
+        }],
+      });
     }
 
     const purchasedIds = [

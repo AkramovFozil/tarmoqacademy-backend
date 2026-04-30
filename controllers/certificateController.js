@@ -106,6 +106,13 @@ const buildCertificateHtml = ({ userName, courseTitle, issuedDate }) => `<!DOCTY
 // @access  Private
 const getCertificate = async (req, res) => {
   try {
+    if (req.user?.role === 'offline_student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Offline o\'quvchilar uchun sertifikat funksiyasi yopiq.',
+      });
+    }
+
     const { courseId } = req.params;
 
     const [user, course, modules, userProgress, uploadedCertificate] = await Promise.all([

@@ -15,6 +15,13 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    offlineLogin: {
+      type: String,
+      default: '',
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
     phone: {
       type: String,
       default: '',
@@ -28,8 +35,28 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['student', 'admin'],
+      enum: ['student', 'admin', 'offline_student'],
       default: 'student',
+    },
+    offlineStatus: {
+      type: String,
+      enum: ['active', 'frozen', 'completed'],
+      default: 'active',
+    },
+    offlineNote: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    offlineAccess: {
+      courseId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Course',
+        default: null,
+      },
+      allowedLessons: [
+        { type: mongoose.Schema.Types.ObjectId, ref: 'Lesson' }
+      ],
     },
     avatar: {
       type: String,

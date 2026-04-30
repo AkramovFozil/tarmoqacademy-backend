@@ -109,7 +109,13 @@ const login = async (req, res) => {
     }
 
     // Find user with password
-    const user = await User.findOne({ email }).select('+password');
+    const login = String(email || '').trim().toLowerCase();
+    const user = await User.findOne({
+      $or: [
+        { email: login },
+        { offlineLogin: login },
+      ],
+    }).select('+password');
     if (!user) {
       return res.status(401).json({
         success: false,

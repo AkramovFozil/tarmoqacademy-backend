@@ -38,6 +38,39 @@ const buildUploadPath = (file) => {
 const ACTIVE_ACTIVITY_DAYS = 14;
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(String(value || ''));
+const OFFLINE_EMAIL_DOMAIN = 'offline.tarmoq.local';
+
+const escapeRegex = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const normalizeOfflineStatus = (status, fallback = 'active') => (
+  ['active', 'frozen', 'completed'].includes(status) ? status : fallback
+);
+
+const offlineStatusLabel = (status) => ({
+  active: 'Aktiv',
+  frozen: 'Muzlatilgan',
+  completed: 'Tugagan',
+}[status] || 'Aktiv');
+
+const buildOfflineEmail = (login) => (
+  login.includes('@') ? login : `${login}@${OFFLINE_EMAIL_DOMAIN}`
+);
+
+const serializeOfflineStudent = (user, course = null, totalLessons = 0) => ({
+  id: user._id,
+  name: user.name,
+  phone: user.phone || '',
+  login: user.offlineLogin || user.email,
+  passwordMask: '********',
+  courseId: user.offlineAccess?.courseId || '',
+  courseTitle: course?.title || '',
+  status: user.offlineStatus || 'active',
+  statusLabel: offlineStatusLabel(user.offlineStatus || 'active'),
+  note: user.offlineNote || '',
+  createdAt: user.createdAt,
+  allowedLessonsCount: (user.offlineAccess?.allowedLessons || []).length,
+  totalLessons,
+});
 
 const normalizePaymentStatus = (status, fallback = 'paid') => {
   return status === 'pending' || status === 'paid' ? status : fallback;
@@ -48,6 +81,28 @@ const getCourseLessonIds = async (courseId) => {
   const moduleIds = modules.map((module) => module._id);
   const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).select('_id');
   return lessons.map((lesson) => lesson._id);
+};
+
+const getCourseLessonsDetailed = async (courseId) => {
+  const modules = await Module.find({ courseId }).sort({ order: 1 }).select('_id title order');
+  const rows = [];
+
+  for (const module of modules) {
+    const lessons = await Lesson.find({ moduleId: module._id }).sort({ order: 1 }).select('_id title order duration');
+    lessons.forEach((lesson) => {
+      rows.push({
+        id: lesson._id,
+        title: lesson.title,
+        order: lesson.order,
+        duration: lesson.duration,
+        moduleId: module._id,
+        moduleTitle: module.title,
+        moduleOrder: module.order,
+      });
+    });
+  }
+
+  return rows;
 };
 
 const syncManualCourseAccess = async ({ user, course, paymentStatus }) => {
@@ -537,6 +592,212 @@ const removeCourseUser = async (req, res) => {
 
 // ─── DASHBOARD STATS ──────────────────────────────────────────────────────────
 
+// @desc    Admin: list offline students
+// @route   GET /api/admin/offline-students
+const getOfflineStudents = async (req, res) => {
+  try {
+    const { search = '', status = 'all', courseId = '' } = req.query;
+    const query = { role: 'offline_student' };
+
+    if (['active', 'frozen', 'completed'].includes(status)) {
+      query.offlineStatus = status;
+    }
+
+    if (courseId && isValidObjectId(courseId)) {
+      query['offlineAccess.courseId'] = courseId;
+    }
+
+    const term = String(search || '').trim();
+    if (term) {
+      const regex = new RegExp(escapeRegex(term), 'i');
+      query.$or = [
+        { name: regex },
+        { phone: regex },
+        { email: regex },
+        { offlineLogin: regex },
+      ];
+    }
+
+    const users = await User.find(query)
+      .select('name email phone role offlineLogin offlineStatus offlineNote offlineAccess createdAt')
+      .sort({ createdAt: -1 });
+
+    const courseIds = [...new Set(users.map((user) => user.offlineAccess?.courseId?.toString()).filter(Boolean))];
+    const courses = await Course.find({ _id: { $in: courseIds } }).select('title');
+    const courseMap = new Map(courses.map((course) => [course._id.toString(), course]));
+    const totalLessonsMap = new Map();
+
+    await Promise.all(courseIds.map(async (id) => {
+      totalLessonsMap.set(id, (await getCourseLessonIds(id)).length);
+    }));
+
+    const rows = users.map((user) => {
+      const id = user.offlineAccess?.courseId?.toString() || '';
+      return serializeOfflineStudent(user, courseMap.get(id), totalLessonsMap.get(id) || 0);
+    });
+
+    res.json({ success: true, count: rows.length, students: rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Admin: create offline student account
+// @route   POST /api/admin/offline-students
+const createOfflineStudent = async (req, res) => {
+  try {
+    const {
+      firstName,
+      lastName,
+      phone,
+      login,
+      password,
+      courseId,
+      note,
+    } = req.body || {};
+
+    const normalizedFirstName = String(firstName || '').trim();
+    const normalizedLastName = String(lastName || '').trim();
+    const normalizedLogin = String(login || '').trim().toLowerCase();
+    const normalizedPassword = String(password || '');
+
+    if (!normalizedFirstName || !normalizedLastName || !normalizedLogin || !normalizedPassword || !courseId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Ism, familiya, login, parol va kurs majburiy.',
+      });
+    }
+
+    if (normalizedPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'Parol kamida 6 ta belgidan iborat bo\'lishi kerak.' });
+    }
+
+    if (!/^[a-z0-9._@-]{3,80}$/.test(normalizedLogin)) {
+      return res.status(400).json({ success: false, message: 'Login faqat lotin harflari, raqam, nuqta, tire, pastki chiziq yoki @ dan iborat bo\'lsin.' });
+    }
+
+    if (!isValidObjectId(courseId)) {
+      return res.status(400).json({ success: false, message: 'Kurs noto\'g\'ri tanlangan.' });
+    }
+
+    const course = await Course.findById(courseId).select('title');
+    if (!course) return res.status(404).json({ success: false, message: 'Kurs topilmadi.' });
+
+    const email = buildOfflineEmail(normalizedLogin);
+    const existing = await User.findOne({
+      $or: [
+        { email },
+        { offlineLogin: normalizedLogin },
+      ],
+    }).select('_id');
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Bu login allaqachon ishlatilgan.' });
+    }
+
+    const user = await User.create({
+      name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
+      email,
+      offlineLogin: normalizedLogin,
+      phone: String(phone || '').trim(),
+      password: normalizedPassword,
+      role: 'offline_student',
+      offlineStatus: 'active',
+      offlineNote: String(note || '').trim(),
+      offlineAccess: {
+        courseId,
+        allowedLessons: [],
+      },
+    });
+
+    const totalLessons = (await getCourseLessonIds(course._id)).length;
+    res.status(201).json({
+      success: true,
+      message: 'Offline account yaratildi.',
+      student: serializeOfflineStudent(user, course, totalLessons),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Admin: get lesson access state for an offline student
+// @route   GET /api/admin/offline-students/:id/access
+const getOfflineStudentAccess = async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Foydalanuvchi ID noto\'g\'ri.' });
+    }
+
+    const user = await User.findOne({ _id: req.params.id, role: 'offline_student' })
+      .select('name phone email offlineLogin offlineStatus offlineNote offlineAccess createdAt');
+    if (!user) return res.status(404).json({ success: false, message: 'Offline o\'quvchi topilmadi.' });
+
+    const course = user.offlineAccess?.courseId
+      ? await Course.findById(user.offlineAccess.courseId).select('title')
+      : null;
+    if (!course) return res.status(404).json({ success: false, message: 'Offline kurs topilmadi.' });
+
+    const allowedSet = new Set((user.offlineAccess.allowedLessons || []).map((id) => id.toString()));
+    const lessons = (await getCourseLessonsDetailed(course._id)).map((lesson) => ({
+      ...lesson,
+      allowed: allowedSet.has(lesson.id.toString()),
+    }));
+
+    res.json({
+      success: true,
+      student: serializeOfflineStudent(user, course, lessons.length),
+      lessons,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// @desc    Admin: update lesson access for an offline student
+// @route   PUT /api/admin/offline-students/:id/access
+const updateOfflineStudentAccess = async (req, res) => {
+  try {
+    if (!isValidObjectId(req.params.id)) {
+      return res.status(400).json({ success: false, message: 'Foydalanuvchi ID noto\'g\'ri.' });
+    }
+
+    const user = await User.findOne({ _id: req.params.id, role: 'offline_student' });
+    if (!user) return res.status(404).json({ success: false, message: 'Offline o\'quvchi topilmadi.' });
+
+    const courseId = user.offlineAccess?.courseId;
+    if (!courseId) return res.status(400).json({ success: false, message: 'Offline kurs biriktirilmagan.' });
+
+    const requestedLessons = Array.isArray(req.body.allowedLessons) ? req.body.allowedLessons : [];
+    const uniqueRequested = [...new Set(requestedLessons.map((id) => String(id || '').trim()).filter(Boolean))];
+    if (uniqueRequested.some((id) => !isValidObjectId(id))) {
+      return res.status(400).json({ success: false, message: 'Dars ID noto\'g\'ri.' });
+    }
+
+    const validLessons = await getCourseLessonIds(courseId);
+    const validLessonSet = new Set(validLessons.map((id) => id.toString()));
+    const allowedLessons = uniqueRequested.filter((id) => validLessonSet.has(id));
+
+    user.offlineAccess.allowedLessons = allowedLessons;
+    if (typeof req.body.status !== 'undefined') {
+      user.offlineStatus = normalizeOfflineStatus(req.body.status, user.offlineStatus || 'active');
+    }
+    if (typeof req.body.note !== 'undefined') {
+      user.offlineNote = String(req.body.note || '').trim();
+    }
+
+    await user.save();
+
+    const course = await Course.findById(courseId).select('title');
+    res.json({
+      success: true,
+      message: 'Dars ruxsatlari saqlandi.',
+      student: serializeOfflineStudent(user, course, validLessons.length),
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 // @desc    Admin dashboard summary stats
 // @route   GET /api/admin/stats
 const getStats = async (req, res) => {
@@ -642,6 +903,10 @@ module.exports = {
   addCourseUser,
   updateCourseUser,
   removeCourseUser,
+  getOfflineStudents,
+  createOfflineStudent,
+  getOfflineStudentAccess,
+  updateOfflineStudentAccess,
   getStats,
   assignCourseToUser,
   uploadCertificate,

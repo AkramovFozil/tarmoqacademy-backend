@@ -113,6 +113,13 @@ const populateSubmissionQuery = (query) =>
 // @access  Private
 const submitTaskAnswer = async (req, res) => {
   try {
+    if (req.user?.role === 'offline_student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Offline o\'quvchilar topshiriqni platformada yubora olmaydi.',
+      });
+    }
+
     const { lessonId, answer, telegramSubmitted, telegramUsername } = req.body;
     const uploadedFile = req.file || null;
     const isTelegramSubmission = telegramSubmitted === true || telegramSubmitted === 'true' || telegramSubmitted === '1';

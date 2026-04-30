@@ -10,6 +10,20 @@ const isUserEnrolledInCourse = (user, courseId) => {
   );
 };
 
+const isOfflineCourseActive = (user, courseId) => {
+  if (!user || user.role !== 'offline_student') return false;
+  if (user.offlineStatus && user.offlineStatus !== 'active') return false;
+  const offlineCourseId = user.offlineAccess?.courseId;
+  return Boolean(offlineCourseId && offlineCourseId.toString() === courseId.toString());
+};
+
+const isOfflineLessonAllowed = (user, courseId, lessonId) => {
+  if (!isOfflineCourseActive(user, courseId)) return false;
+  return (user.offlineAccess?.allowedLessons || []).some(
+    (id) => id.toString() === lessonId.toString()
+  );
+};
+
 const getPreviewLessonKey = async (courseId) => {
   const firstModule = await Module.findOne({ courseId }).sort({ order: 1 }).select('_id');
   if (!firstModule) return null;
@@ -20,5 +34,7 @@ const getPreviewLessonKey = async (courseId) => {
 
 module.exports = {
   getPreviewLessonKey,
+  isOfflineCourseActive,
+  isOfflineLessonAllowed,
   isUserEnrolledInCourse,
 };

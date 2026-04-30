@@ -9,6 +9,8 @@ const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
 const {
   getPreviewLessonKey,
+  isOfflineCourseActive,
+  isOfflineLessonAllowed,
   isUserEnrolledInCourse,
 } = require('../utils/lessonVideo');
 
@@ -37,7 +39,43 @@ const getCourseProgress = async (courseId, userId) => {
 // @access  Private
 const getCourses = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+    if (user.role === 'offline_student') {
+      const courseId = user.offlineAccess?.courseId;
+      if (!courseId) {
+        return res.status(200).json({ success: true, count: 0, courses: [] });
+      }
+
+      const course = await Course.findById(courseId);
+      if (!course) {
+        return res.status(200).json({ success: true, count: 0, courses: [] });
+      }
+
+      const modules = await Module.find({ courseId: course._id }).select('_id');
+      const moduleIds = modules.map((module) => module._id);
+      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
+
+      return res.status(200).json({
+        success: true,
+        count: 1,
+        courses: [{
+          id: course._id,
+          title: course.title,
+          description: course.description,
+          image: course.image,
+          price: 0,
+          category: course.category,
+          totalLessons,
+          progress: 0,
+          purchased: user.offlineStatus === 'active',
+          offlineMode: true,
+          allowedLessons: (user.offlineAccess?.allowedLessons || []).length,
+          previewAvailable: false,
+          isCompleted: false,
+        }],
+      });
+    }
+
     const courses = await Course.find(
       user.role === 'admin'
         ? {}
@@ -96,9 +134,16 @@ const getCourseById = async (req, res) => {
         .json({ success: false, message: 'Course not found.' });
     }
 
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
     const hasFullAccess = isUserEnrolledInCourse(user, course._id);
-    if (!hasFullAccess && !course.isPublished) {
+    const hasOfflineAccess = isOfflineCourseActive(user, course._id);
+    if (user?.role === 'offline_student' && !hasOfflineAccess) {
+      return res.status(403).json({
+        success: false,
+        message: 'Bu kurs offline hisobingiz uchun ochilmagan.',
+      });
+    }
+    if (!hasFullAccess && !hasOfflineAccess && !course.isPublished) {
       return res.status(404).json({
         success: false,
         message: 'Kurs topilmadi.',
@@ -115,7 +160,7 @@ const getCourseById = async (req, res) => {
       : null;
     const completedLessonIds = new Set((userProgress?.completedLessons || []).map((id) => id.toString()));
     const courseLessonDocs = await Lesson.find({ moduleId: { $in: modules.map((module) => module._id) } }).select('_id');
-    const taskSubmissions = await TaskSubmission.find({
+    const taskSubmissions = hasOfflineAccess ? [] : await TaskSubmission.find({
       userId: req.user._id,
       lessonId: { $in: courseLessonDocs.map((lesson) => lesson._id) },
     })
@@ -127,7 +172,7 @@ const getCourseById = async (req, res) => {
         submission,
       ])
     );
-    const previewLessonKey = hasFullAccess ? null : await getPreviewLessonKey(course._id);
+    const previewLessonKey = hasFullAccess || hasOfflineAccess ? null : await getPreviewLessonKey(course._id);
     const modulesWithLessons = [];
     let totalLessons = 0;
 
@@ -137,8 +182,9 @@ const getCourseById = async (req, res) => {
 
       for (const lesson of lessons) {
         totalLessons += 1;
-        const isPreviewLesson = !hasFullAccess && previewLessonKey === lesson._id.toString();
-        const canAccessLesson = hasFullAccess || isPreviewLesson;
+        const offlineAllowed = isOfflineLessonAllowed(user, course._id, lesson._id);
+        const isPreviewLesson = !hasFullAccess && !hasOfflineAccess && previewLessonKey === lesson._id.toString();
+        const canAccessLesson = hasFullAccess || offlineAllowed || isPreviewLesson;
         const taskSubmission = taskSubmissionMap.get(lesson._id.toString());
 
         lessonsWithProgress.push({
@@ -152,11 +198,15 @@ const getCourseById = async (req, res) => {
             ? `/api/videos/lessons/${lesson._id}/playback-url`
             : '',
           content: canAccessLesson ? lesson.content : '',
-          task: canAccessLesson ? lesson.task : '',
+          task: canAccessLesson && !hasOfflineAccess ? lesson.task : '',
           duration: lesson.duration,
           order: lesson.order,
           completed: hasFullAccess ? completedLessonIds.has(lesson._id.toString()) : false,
-          locked: !hasFullAccess && !isPreviewLesson,
+          locked: hasOfflineAccess ? !offlineAllowed : (!hasFullAccess && !isPreviewLesson),
+          lockMessage: hasOfflineAccess
+            ? 'Bu dars hali administrator tomonidan ochilmagan'
+            : undefined,
+          offlineAllowed,
           previewAccessible: isPreviewLesson,
           taskAnswer: canAccessLesson ? taskSubmission?.answer || '' : '',
           taskAnsweredAt: canAccessLesson ? taskSubmission?.updatedAt || null : null,
@@ -198,8 +248,9 @@ const getCourseById = async (req, res) => {
         price: course.price ?? 99000,
         category: course.category,
         isPublished: course.isPublished,
-        purchased: hasFullAccess,
-        previewMode: !hasFullAccess,
+        purchased: hasFullAccess || hasOfflineAccess,
+        offlineMode: hasOfflineAccess,
+        previewMode: !hasFullAccess && !hasOfflineAccess,
         progress,
         totalLessons,
         completedLessonsCount: hasFullAccess ? completedLessonIds.size : 0,

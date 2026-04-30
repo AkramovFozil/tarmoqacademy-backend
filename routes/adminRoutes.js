@@ -8,6 +8,7 @@ const {
   getUsers, createUser, updateUser, updateCourse, deleteUser,
   getCourses, createCourse, deleteCourse, getCourseUsers,
   addCourseUser, updateCourseUser, removeCourseUser,
+  getOfflineStudents, createOfflineStudent, getOfflineStudentAccess, updateOfflineStudentAccess,
   getStats, assignCourseToUser, uploadCertificate,} = require('../controllers/adminController');
 
 
@@ -21,6 +22,10 @@ router.put('/users/:id',                           updateUser);
 router.delete('/users/:id',                        deleteUser);
 router.post('/assign-course',                      assignCourseToUser);
 router.post('/certificates', uploadPdf.single('certificate'), uploadCertificate);
+router.get('/offline-students',                    getOfflineStudents);
+router.post('/offline-students',                   createOfflineStudent);
+router.get('/offline-students/:id/access',         getOfflineStudentAccess);
+router.put('/offline-students/:id/access',         updateOfflineStudentAccess);
 router.get('/courses',                             getCourses);
 router.post('/courses',   uploadImage.single("image"),  createCourse);
 router.put('/courses/:id', uploadImage.single("image"), updateCourse);

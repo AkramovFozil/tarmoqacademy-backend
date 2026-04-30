@@ -4,6 +4,7 @@ const Lesson = require('../models/Lesson');
 const Module = require('../models/Module');
 const Course = require('../models/Course');
 const User = require('../models/User');
+const { isOfflineCourseActive, isOfflineLessonAllowed } = require('../utils/lessonVideo');
 
 const toDayKey = (date) => {
   const value = new Date(date);
@@ -35,6 +36,13 @@ const getCourseLessonContext = async (lessonId) => {
 // @access  Private
 const completeLesson = async (req, res) => {
   try {
+    if (req.user?.role === 'offline_student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Offline o\'quvchilar uchun online progress yopiq.',
+      });
+    }
+
     const { lessonId } = req.body;
 
     if (!lessonId) {
@@ -131,7 +139,23 @@ const markLessonViewed = async (req, res) => {
     }
 
     const { lesson, courseId } = lessonContext;
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+
+    if (user?.role === 'offline_student') {
+      if (!isOfflineLessonAllowed(user, courseId, lesson._id)) {
+        return res.status(403).json({
+          success: false,
+          message: 'Bu dars hali administrator tomonidan ochilmagan.',
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        lastLessonId: lesson._id,
+        lastViewedAt: null,
+        offlineMode: true,
+      });
+    }
 
     if (!hasCourseAccess(user, courseId)) {
       return res.status(403).json({
@@ -169,6 +193,19 @@ const markLessonViewed = async (req, res) => {
 // @access  Private
 const getUserStats = async (req, res) => {
   try {
+    if (req.user?.role === 'offline_student') {
+      return res.status(200).json({
+        success: true,
+        stats: {
+          activeCourses: req.user.offlineAccess?.courseId ? 1 : 0,
+          totalCompleted: 0,
+          streak: 0,
+          courses: [],
+          offlineMode: true,
+        },
+      });
+    }
+
     // Total unique courses user has started
     const activeCourses = await Progress.distinct('courseId', {
       userId: req.user._id,
@@ -253,7 +290,24 @@ const getUserStats = async (req, res) => {
 const getCourseProgress = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+
+    if (user?.role === 'offline_student' && isOfflineCourseActive(user, courseId)) {
+      const modules = await Module.find({ courseId }).select('_id');
+      const moduleIds = modules.map((m) => m._id);
+      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
+      return res.status(200).json({
+        success: true,
+        courseId,
+        progress: 0,
+        completedLessons: 0,
+        totalLessons,
+        completedLessonIds: [],
+        lastLessonId: null,
+        lastViewedAt: null,
+        offlineMode: true,
+      });
+    }
 
     if (!hasCourseAccess(user, courseId)) {
       return res.status(403).json({
@@ -301,7 +355,24 @@ const getCourseProgress = async (req, res) => {
 const getUserProgressByCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+
+    if (user?.role === 'offline_student' && isOfflineCourseActive(user, courseId)) {
+      const modules = await Module.find({ courseId }).select('_id');
+      const moduleIds = modules.map((module) => module._id);
+      const totalLessons = await Lesson.countDocuments({ moduleId: { $in: moduleIds } });
+      return res.status(200).json({
+        success: true,
+        courseId,
+        progress: 0,
+        completedLessons: [],
+        totalLessons,
+        completedCount: 0,
+        lastLessonId: null,
+        lastViewedAt: null,
+        offlineMode: true,
+      });
+    }
 
     if (!hasCourseAccess(user, courseId)) {
       return res.status(403).json({

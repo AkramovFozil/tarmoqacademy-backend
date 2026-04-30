@@ -74,6 +74,13 @@ const createPurchase = async (req, res) => {
       });
     }
 
+    if (user.role === 'offline_student') {
+      return res.status(403).json({
+        success: false,
+        message: 'Offline o\'quvchilar uchun payment funksiyasi yopiq.',
+      });
+    }
+
     if (!course || !course.isPublished) {
       return res.status(404).json({ success: false, message: 'Kurs topilmadi.' });
     }
@@ -177,6 +184,13 @@ const createPurchaseFromLegacyRoute = (req, res) => {
 
 const getMyPurchases = async (req, res) => {
   try {
+    if (req.user?.role === 'offline_student') {
+      return res.status(200).json({
+        success: true,
+        purchases: [],
+      });
+    }
+
     const purchases = await Purchase.find({
       userId: req.user._id,
       status: 'paid',

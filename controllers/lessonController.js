@@ -5,6 +5,7 @@ const TaskSubmission = require('../models/TaskSubmission');
 const { notifyCourseUsers, safeNotify } = require('../services/notificationService');
 const {
   getPreviewLessonKey,
+  isOfflineLessonAllowed,
   isUserEnrolledInCourse,
 } = require('../utils/lessonVideo');
 
@@ -83,13 +84,16 @@ const getLessonById = async (req, res) => {
     }
 
     const hasFullAccess = isUserEnrolledInCourse(req.user, lesson.moduleId.courseId);
-    const previewLessonKey = hasFullAccess ? null : await getPreviewLessonKey(lesson.moduleId.courseId);
-    const canAccessLesson = hasFullAccess || previewLessonKey === lesson._id.toString();
+    const offlineAllowed = isOfflineLessonAllowed(req.user, lesson.moduleId.courseId, lesson._id);
+    const previewLessonKey = hasFullAccess || offlineAllowed ? null : await getPreviewLessonKey(lesson.moduleId.courseId);
+    const canAccessLesson = hasFullAccess || offlineAllowed || previewLessonKey === lesson._id.toString();
 
     if (!canAccessLesson) {
       return res.status(403).json({
         success: false,
-        message: 'Bu dars uchun ruxsat yo\'q.',
+        message: req.user.role === 'offline_student'
+          ? 'Bu dars hali administrator tomonidan ochilmagan.'
+          : 'Bu dars uchun ruxsat yo\'q.',
       });
     }
 
@@ -151,7 +155,7 @@ const getLessonById = async (req, res) => {
           ? `/api/videos/lessons/${lesson._id}/playback-url`
           : '',
         content: lesson.content,
-        task: lesson.task,
+        task: req.user.role === 'offline_student' ? '' : lesson.task,
         duration: lesson.duration,
         order: lesson.order,
         moduleId: lesson.moduleId._id,
