@@ -10,6 +10,11 @@ const UserProgress = require('../models/UserProgress');
 const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
 const { notifyStudents, safeNotify } = require('../services/notificationService');
+const {
+  getMaxCourseLessonCount,
+  normalizeLegacyCount,
+  syncLegacyProgressForUser,
+} = require('../services/legacyProgressService');
 
 const normalizePrice = (rawValue, fallback = 99000) => {
   const value = Number(rawValue);
@@ -74,6 +79,18 @@ const serializeOfflineStudent = (user, course = null, totalLessons = 0) => ({
 
 const normalizePaymentStatus = (status, fallback = 'paid') => {
   return status === 'pending' || status === 'paid' ? status : fallback;
+};
+
+const readLegacyUnlockedLessons = async (rawValue, fallback = 0) => {
+  if (typeof rawValue === 'undefined') return normalizeLegacyCount(fallback);
+  const value = normalizeLegacyCount(rawValue);
+  const maxLessons = await getMaxCourseLessonCount();
+  if (value > maxLessons) {
+    const error = new Error(`Avval tugatgan darslar soni ${maxLessons} tadan oshmasin.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return value;
 };
 
 const getCourseLessonIds = async (courseId) => {
@@ -168,6 +185,8 @@ const buildCourseUserRow = async ({ user, courseId, purchase, totalLessons, less
     totalLessons,
     lastActivity,
     activityStatus: isActive ? 'active' : 'inactive',
+    legacyUnlockedLessons: user.legacyUnlockedLessons || 0,
+    legacyApplied: Boolean(user.legacyApplied),
   };
 };
 
@@ -189,6 +208,7 @@ const getUsers = async (req, res) => {
 const createUser = async (req, res) => {
   try {
     const { name, email, password, role, phone } = req.body;
+    const legacyUnlockedLessons = await readLegacyUnlockedLessons(req.body.legacyUnlockedLessons, 0);
 
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'name, email va password majburiy.' });
@@ -205,15 +225,26 @@ const createUser = async (req, res) => {
       password,
       phone: phone || '',
       role: role === 'admin' ? 'admin' : 'student',
+      legacyUnlockedLessons: role === 'admin' ? 0 : legacyUnlockedLessons,
+      legacyApplied: false,
     });
 
     res.status(201).json({
       success: true,
       message: 'Foydalanuvchi yaratildi.',
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role, createdAt: user.createdAt },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        legacyUnlockedLessons: user.legacyUnlockedLessons || 0,
+        legacyApplied: Boolean(user.legacyApplied),
+        createdAt: user.createdAt,
+      },
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 
@@ -236,15 +267,35 @@ const updateUser = async (req, res) => {
     if (name) user.name = name;
     if (typeof phone !== 'undefined') user.phone = phone;
     if (role && (role === 'student' || role === 'admin')) user.role = role;
+    if (typeof req.body.legacyUnlockedLessons !== 'undefined') {
+      const nextLegacyUnlockedLessons = user.role === 'admin'
+        ? 0
+        : await readLegacyUnlockedLessons(req.body.legacyUnlockedLessons, user.legacyUnlockedLessons || 0);
+      if (Number(user.legacyUnlockedLessons || 0) !== nextLegacyUnlockedLessons) {
+        user.legacyUnlockedLessons = nextLegacyUnlockedLessons;
+        user.legacyApplied = false;
+      }
+    }
 
     await user.save();
+    if (user.role === 'student' && typeof req.body.legacyUnlockedLessons !== 'undefined') {
+      await syncLegacyProgressForUser(user._id);
+    }
     res.json({
       success: true,
       message: 'Foydalanuvchi yangilandi.',
-      user: { id: user._id, name: user.name, email: user.email, phone: user.phone, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        legacyUnlockedLessons: user.legacyUnlockedLessons || 0,
+        legacyApplied: Boolean(user.legacyApplied),
+      },
     });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    res.status(err.statusCode || 500).json({ success: false, message: err.message });
   }
 };
 
@@ -465,7 +516,9 @@ const getCourseUsers = async (req, res) => {
       userQuery.$and = [{ $or: [{ name: regex }, { email: regex }, { phone: regex }] }];
     }
 
-    const users = await User.find(userQuery).select('name email phone role createdAt enrolledCourses purchasedCourses').sort({ createdAt: -1 });
+    const users = await User.find(userQuery)
+      .select('name email phone role createdAt enrolledCourses purchasedCourses legacyUnlockedLessons legacyApplied')
+      .sort({ createdAt: -1 });
     const lessonIds = await getCourseLessonIds(course._id);
     const rows = await Promise.all(
       users.map((user) => buildCourseUserRow({
@@ -515,6 +568,9 @@ const addCourseUser = async (req, res) => {
     }
 
     await syncManualCourseAccess({ user, course, paymentStatus });
+    if (Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user._id, { courseId: course._id });
+    }
     res.status(201).json({ success: true, message: `"${course.title}" kursiga ${user.name} qo'shildi.` });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -548,8 +604,18 @@ const updateCourseUser = async (req, res) => {
 
     if (name) user.name = name;
     if (typeof phone !== 'undefined') user.phone = phone;
+    if (typeof req.body.legacyUnlockedLessons !== 'undefined') {
+      const nextLegacyUnlockedLessons = await readLegacyUnlockedLessons(req.body.legacyUnlockedLessons, user.legacyUnlockedLessons || 0);
+      if (Number(user.legacyUnlockedLessons || 0) !== nextLegacyUnlockedLessons) {
+        user.legacyUnlockedLessons = nextLegacyUnlockedLessons;
+        user.legacyApplied = false;
+      }
+    }
 
     await syncManualCourseAccess({ user, course, paymentStatus });
+    if (typeof req.body.legacyUnlockedLessons !== 'undefined') {
+      await syncLegacyProgressForUser(user._id);
+    }
     res.json({ success: true, message: 'Kurs foydalanuvchisi yangilandi.' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -836,6 +902,9 @@ const assignCourseToUser = async (req, res) => {
 
     user.enrolledCourses.push(courseId);
     await user.save();
+    if (Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user._id, { courseId });
+    }
 
     res.json({
       success: true,

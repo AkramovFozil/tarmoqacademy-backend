@@ -53,6 +53,19 @@ const getLessonAccessContext = async (userId, lessonId) => {
     return { error: { status: 403, message: 'Kursni sotib olish kerak.' } };
   }
 
+  const legacyProgress = fullAccess
+    ? await Progress.findOne({
+        userId,
+        lessonId: lesson._id,
+        legacyCompleted: true,
+        completed: true,
+      }).select('_id')
+    : null;
+
+  if (legacyProgress) {
+    return { error: { status: 400, message: 'Bu dars avval tugatilgan. Topshiriq talab qilinmaydi.' } };
+  }
+
   return { lesson, course, fullAccess, previewAccess };
 };
 

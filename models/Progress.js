@@ -46,6 +46,10 @@ const progressSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    legacyCompleted: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

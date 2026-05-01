@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { notifyAdmins, safeNotify } = require('../services/notificationService');
+const { syncLegacyProgressForUser } = require('../services/legacyProgressService');
 
 // Generate JWT token
 const generateToken = (id) => {
@@ -133,6 +134,10 @@ const login = async (req, res) => {
     }
 
     const token = generateToken(user._id);
+
+    if (user.role !== 'offline_student' && Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user);
+    }
 
     res.status(200).json({
       success: true,

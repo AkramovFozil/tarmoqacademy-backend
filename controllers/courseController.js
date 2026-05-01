@@ -13,6 +13,7 @@ const {
   isOfflineCourseActive,
   isUserEnrolledInCourse,
 } = require('../utils/lessonVideo');
+const { syncLegacyProgressForUser } = require('../services/legacyProgressService');
 
 // Helper: calculate course progress for a user
 const getCourseProgress = async (courseId, userId) => {
@@ -39,7 +40,7 @@ const getCourseProgress = async (courseId, userId) => {
 // @access  Private
 const getCourses = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess legacyUnlockedLessons legacyApplied');
     if (user.role === 'offline_student') {
       const courseId = user.offlineAccess?.courseId;
       if (!courseId) {
@@ -82,6 +83,10 @@ const getCourses = async (req, res) => {
           isCompleted: false,
         }],
       });
+    }
+
+    if (Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user);
     }
 
     const courses = await Course.find(
@@ -142,7 +147,7 @@ const getCourseById = async (req, res) => {
         .json({ success: false, message: 'Course not found.' });
     }
 
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess legacyUnlockedLessons legacyApplied');
     const hasFullAccess = isUserEnrolledInCourse(user, course._id);
     const hasOfflineAccess = isOfflineCourseActive(user, course._id);
     if (user?.role === 'offline_student' && !hasOfflineAccess) {
@@ -158,6 +163,10 @@ const getCourseById = async (req, res) => {
       });
     }
 
+    if (hasFullAccess && Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user, { courseId: course._id });
+    }
+
     const modules = await Module.find({ courseId: course._id }).sort({
       order: 1,
     });
@@ -168,11 +177,11 @@ const getCourseById = async (req, res) => {
       : null;
     const completedLessonIds = new Set((userProgress?.completedLessons || []).map((id) => id.toString()));
     const courseLessonDocs = await Lesson.find({ moduleId: { $in: modules.map((module) => module._id) } }).select('_id');
-    const progressDocs = hasOfflineAccess
+    const progressDocs = hasOfflineAccess || hasFullAccess
       ? await Progress.find({
           userId: req.user._id,
           lessonId: { $in: courseLessonDocs.map((lesson) => lesson._id) },
-        }).select('lessonId completed watchPercent status lastPosition duration')
+        }).select('lessonId completed watchPercent status lastPosition duration legacyCompleted')
       : [];
     const progressMap = new Map(progressDocs.map((progress) => [progress.lessonId.toString(), progress]));
 
@@ -206,6 +215,7 @@ const getCourseById = async (req, res) => {
         const canAccessLesson = hasFullAccess || offlineAllowed || isPreviewLesson;
         const taskSubmission = taskSubmissionMap.get(lesson._id.toString());
         const lessonProgress = progressMap.get(lesson._id.toString());
+        const legacyCompleted = Boolean(hasFullAccess && lessonProgress?.legacyCompleted);
 
         lessonsWithProgress.push({
           id: lesson._id,
@@ -218,12 +228,13 @@ const getCourseById = async (req, res) => {
             ? `/api/videos/lessons/${lesson._id}/playback-url`
             : '',
           content: canAccessLesson ? lesson.content : '',
-          task: canAccessLesson && !hasOfflineAccess ? lesson.task : '',
+          task: canAccessLesson && !hasOfflineAccess && !legacyCompleted ? lesson.task : '',
           duration: lesson.duration,
           order: lesson.order,
           completed: hasFullAccess
             ? completedLessonIds.has(lesson._id.toString())
             : Boolean(lessonProgress?.completed || Number(lessonProgress?.watchPercent || 0) >= 85),
+          legacyCompleted,
           watchPercent: hasOfflineAccess ? Number(lessonProgress?.watchPercent || 0) : 0,
           progressStatus: hasOfflineAccess ? lessonProgress?.status || 'not_started' : '',
           lastPosition: hasOfflineAccess ? Number(lessonProgress?.lastPosition || 0) : 0,

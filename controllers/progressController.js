@@ -5,6 +5,7 @@ const Module = require('../models/Module');
 const Course = require('../models/Course');
 const User = require('../models/User');
 const { getOfflineLessonAccess, isOfflineCourseActive, isOfflineLessonAllowed } = require('../utils/lessonVideo');
+const { syncLegacyProgressForUser } = require('../services/legacyProgressService');
 
 const toDayKey = (date) => {
   const value = new Date(date);
@@ -307,6 +308,10 @@ const getUserStats = async (req, res) => {
       });
     }
 
+    if (Number(req.user?.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(req.user._id);
+    }
+
     // Total unique courses user has started
     const activeCourses = await Progress.distinct('courseId', {
       userId: req.user._id,
@@ -391,7 +396,7 @@ const getUserStats = async (req, res) => {
 const getCourseProgress = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess legacyUnlockedLessons legacyApplied');
 
     if (user?.role === 'offline_student' && isOfflineCourseActive(user, courseId)) {
       const modules = await Module.find({ courseId }).select('_id');
@@ -434,6 +439,10 @@ const getCourseProgress = async (req, res) => {
       });
     }
 
+    if (Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user, { courseId });
+    }
+
     const modules = await Module.find({ courseId });
     const moduleIds = modules.map((m) => m._id);
     const lessons = await Lesson.find({ moduleId: { $in: moduleIds } });
@@ -444,9 +453,12 @@ const getCourseProgress = async (req, res) => {
       userId: req.user._id,
       lessonId: { $in: lessonIds },
       completed: true,
-    }).select('lessonId completedAt');
+    }).select('lessonId completedAt legacyCompleted');
 
     const completedIds = completedLessons.map((p) => p.lessonId.toString());
+    const legacyLessonIds = completedLessons
+      .filter((p) => p.legacyCompleted)
+      .map((p) => p.lessonId.toString());
     const progress =
       totalLessons > 0
         ? Math.round((completedIds.length / totalLessons) * 100)
@@ -459,6 +471,7 @@ const getCourseProgress = async (req, res) => {
       completedLessons: completedIds.length,
       totalLessons,
       completedLessonIds: completedIds,
+      legacyLessonIds,
       lastLessonId: null,
       lastViewedAt: null,
     });
@@ -473,7 +486,7 @@ const getCourseProgress = async (req, res) => {
 const getUserProgressByCourse = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+    const user = await User.findById(req.user._id).select('role enrolledCourses purchasedCourses offlineStatus offlineAccess legacyUnlockedLessons legacyApplied');
 
     if (user?.role === 'offline_student' && isOfflineCourseActive(user, courseId)) {
       const modules = await Module.find({ courseId }).select('_id');
@@ -516,6 +529,10 @@ const getUserProgressByCourse = async (req, res) => {
       });
     }
 
+    if (Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user, { courseId });
+    }
+
     const modules = await Module.find({ courseId }).select('_id');
     const moduleIds = modules.map((module) => module._id);
     const lessons = await Lesson.find({ moduleId: { $in: moduleIds } }).select('_id');
@@ -531,6 +548,14 @@ const getUserProgressByCourse = async (req, res) => {
     const completedLessonIds = (userProgress?.completedLessons || [])
       .map((id) => id.toString())
       .filter((id) => lessonIds.includes(id));
+    const legacyRows = await Progress.find({
+      userId: req.user._id,
+      courseId,
+      lessonId: { $in: lessonIds },
+      completed: true,
+      legacyCompleted: true,
+    }).select('lessonId');
+    const legacyLessonIds = legacyRows.map((row) => row.lessonId.toString());
     const progress =
       totalLessons > 0
         ? Math.round((completedLessonIds.length / totalLessons) * 100)
@@ -543,6 +568,7 @@ const getUserProgressByCourse = async (req, res) => {
       completedLessons: completedLessonIds,
       totalLessons,
       completedCount: completedLessonIds.length,
+      legacyLessonIds,
       lastLessonId: userProgress?.lastLessonId?.toString() || null,
       lastViewedAt: userProgress?.lastViewedAt || null,
     });

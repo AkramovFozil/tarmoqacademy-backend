@@ -3,13 +3,14 @@ const Course = require('../models/Course');
 const Module = require('../models/Module');
 const Lesson = require('../models/Lesson');
 const Progress = require('../models/Progress');
+const { syncLegacyProgressForUser } = require('../services/legacyProgressService');
 
 // @desc    Get logged-in user's enrolled courses
 // @route   GET /api/user/my-courses
 const getMyCourses = async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
-      .select('role enrolledCourses purchasedCourses offlineStatus offlineAccess');
+      .select('role enrolledCourses purchasedCourses offlineStatus offlineAccess legacyUnlockedLessons legacyApplied');
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User topilmadi.' });
@@ -61,6 +62,10 @@ const getMyCourses = async (req, res) => {
           isCompleted: false,
         }],
       });
+    }
+
+    if (Number(user.legacyUnlockedLessons || 0) > 0) {
+      await syncLegacyProgressForUser(user);
     }
 
     const purchasedIds = [

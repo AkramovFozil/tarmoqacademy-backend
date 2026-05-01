@@ -71,6 +71,15 @@ const userSchema = new mongoose.Schema(
     purchasedCourses: [
       { type: mongoose.Schema.Types.ObjectId, ref: 'Course' }
     ],
+    legacyUnlockedLessons: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    legacyApplied: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
   
