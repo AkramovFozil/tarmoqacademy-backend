@@ -1,5 +1,6 @@
 const Application = require('../models/Application');
 const { notifyAdmins, safeNotify } = require('../services/notificationService');
+const { sendTelegramMessage } = require('../services/telegramService');
 
 const ALLOWED_STATUSES = new Set(['new', 'contacted', 'approved']);
 
@@ -30,6 +31,14 @@ const createApplication = async (req, res) => {
       message: `${normalizedName} ${normalizedSurname} ${normalizedCourse ? `"${normalizedCourse}" bo'yicha` : ''} murojaat qoldirdi.`,
       type: 'admin_support_message',
     }));
+    sendTelegramMessage(
+      [
+        normalizedCourse ? '🔥 Yangi lead' : '🆘 Yangi support xabar',
+        `Ism: ${normalizedName} ${normalizedSurname}`.trim(),
+        `Tel: ${normalizedPhone}`,
+        ...(normalizedCourse ? [`Kurs: ${normalizedCourse}`] : []),
+      ].join('\n')
+    );
 
     return res.status(201).json({
       success: true,

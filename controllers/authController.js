@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { notifyAdmins, safeNotify } = require('../services/notificationService');
 const { syncLegacyProgressForUser } = require('../services/legacyProgressService');
+const { sendTelegramMessage } = require('../services/telegramService');
 
 // Generate JWT token
 const generateToken = (id) => {
@@ -58,6 +59,13 @@ const register = async (req, res) => {
       message: `${user.name} platformaga ro'yxatdan o'tdi.`,
       type: 'admin_new_user',
     }));
+    sendTelegramMessage(
+      [
+        "🆕 Yangi ro'yxatdan o'tish",
+        `User: ${user.name}`,
+        `Email: ${user.email}`,
+      ].join('\n')
+    );
 
     res.status(201).json({
       success: true,

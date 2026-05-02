@@ -10,6 +10,7 @@ const UserProgress = require('../models/UserProgress');
 const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
 const { notifyStudents, safeNotify } = require('../services/notificationService');
+const { sendTelegramMessage } = require('../services/telegramService');
 const {
   getMaxCourseLessonCount,
   normalizeLegacyCount,
@@ -312,6 +313,14 @@ const deleteUser = async (req, res) => {
     await Progress.deleteMany({ userId: req.params.id });
     await UserProgress.deleteMany({ userId: req.params.id });
     await TaskSubmission.deleteMany({ userId: req.params.id });
+    sendTelegramMessage(
+      [
+        '🚨 Muhim admin ogohlantirish',
+        "Holat: Foydalanuvchi o'chirildi",
+        `Admin: ${req.user.name || req.user.email || '-'}`,
+        `User: ${user.name || user.email || req.params.id}`,
+      ].join('\n')
+    );
     res.json({ success: true, message: 'Foydalanuvchi o\'chirildi.' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -476,6 +485,14 @@ const deleteCourse = async (req, res) => {
     );
     await Purchase.deleteMany({ courseId: course._id });
     await course.deleteOne();
+    sendTelegramMessage(
+      [
+        '🚨 Muhim admin ogohlantirish',
+        "Holat: Kurs o'chirildi",
+        `Admin: ${req.user.name || req.user.email || '-'}`,
+        `Kurs: ${course.title}`,
+      ].join('\n')
+    );
 
     res.json({ success: true, message: 'Kurs o\'chirildi.' });
   } catch (err) {
@@ -776,6 +793,15 @@ const createOfflineStudent = async (req, res) => {
     });
 
     const totalLessons = (await getCourseLessonIds(course._id)).length;
+    sendTelegramMessage(
+      [
+        "🏫 Yangi offline o'quvchi",
+        `User: ${user.name}`,
+        `Tel: ${user.phone || '-'}`,
+        `Kurs: ${course.title}`,
+        `Login: ${user.offlineLogin || normalizedLogin}`,
+      ].join('\n')
+    );
     res.status(201).json({
       success: true,
       message: 'Offline account yaratildi.',

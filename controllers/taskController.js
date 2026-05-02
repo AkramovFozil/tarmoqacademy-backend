@@ -6,8 +6,15 @@ const TaskSubmission = require('../models/TaskSubmission');
 const User = require('../models/User');
 const UserProgress = require('../models/UserProgress');
 const { createNotification, notifyAdmins, safeNotify } = require('../services/notificationService');
+const { sendTelegramMessage } = require('../services/telegramService');
 
 const buildTaskFileUrl = (file) => (file ? `/uploads/tasks/${file.filename}` : '');
+
+const formatTime = (date = new Date()) => date.toLocaleTimeString('uz-UZ', {
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Asia/Tashkent',
+});
 
 const hasFullCourseAccess = (user, courseId) => {
   if (!user) return false;
@@ -229,6 +236,15 @@ const submitTaskAnswer = async (req, res) => {
         : `${req.user.name || 'Talaba'} ${context.course.title} kursida "${context.lesson.title}" topshirig'ini yubordi.`,
       type: isTelegramSubmission ? 'admin_telegram_homework' : 'admin_homework_submitted',
     }));
+    sendTelegramMessage(
+      [
+        '📚 Yangi topshiriq',
+        `User: ${req.user.name || 'Talaba'}`,
+        `Kurs: ${context.course.title || '-'}`,
+        `Lesson: ${context.lesson.title || '-'}`,
+        `Vaqt: ${formatTime()}`,
+      ].join('\n')
+    );
 
     return res.status(200).json({
       success: true,

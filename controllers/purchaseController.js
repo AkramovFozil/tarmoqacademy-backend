@@ -2,8 +2,10 @@ const Purchase = require('../models/Purchase');
 const User = require('../models/User');
 const Course = require('../models/Course');
 const { createNotification, notifyAdmins, safeNotify } = require('../services/notificationService');
+const { sendTelegramMessage } = require('../services/telegramService');
 
 const DEFAULT_PURCHASE_AMOUNT = 99000;
+const formatAmount = (amount) => `${Number(amount || 0).toLocaleString('uz-UZ')} so'm`;
 
 const hasCourseAccess = (user, courseId) => {
   if (!user) return false;
@@ -143,6 +145,14 @@ const createPurchase = async (req, res) => {
         message: `${user.name} "${course.title}" kursi uchun to'lov qildi.`,
         type: 'admin_payment_request',
       }));
+      sendTelegramMessage(
+        [
+          "💳 To'lov arizasi",
+          `User: ${user.name || 'Talaba'}`,
+          `Kurs: ${course.title || '-'}`,
+          `Summa: ${formatAmount(purchase.amount)}`,
+        ].join('\n')
+      );
     }
 
     return res.status(201).json({
