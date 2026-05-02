@@ -16,11 +16,26 @@ const notifyApplicationTelegram = async ({ name, surname, phone, course }) => {
       ].join('\n')
     );
 
-    if (result) {
+    if (result?.ok && result.status === 'sent') {
       console.log('[telegram] application notification sent');
-    } else {
-      console.error('[telegram] application notification failed or skipped');
+      return;
     }
+
+    if (result?.status === 'skipped') {
+      const missing = result.missing?.length ? ` missing env: ${result.missing.join(', ')}` : '';
+      console.error(`[telegram] application notification skipped: ${result.reason || 'unknown'}${missing}`);
+      return;
+    }
+
+    if (result?.status === 'failed') {
+      const statusCode = result.statusCode ? ` status=${result.statusCode}` : '';
+      const body = result.body ? ` body=${result.body}` : '';
+      const error = result.error ? ` error=${result.error}` : '';
+      console.error(`[telegram] application notification failed: ${result.reason || 'unknown'}${statusCode}${body}${error}`);
+      return;
+    }
+
+    console.error('[telegram] application notification failed: unknown_result');
   } catch (error) {
     console.error('[telegram] application notification error:', error.message);
   }
