@@ -1,6 +1,6 @@
 const Application = require('../models/Application');
 const { notifyAdmins, safeNotify } = require('../services/notificationService');
-const { sendTelegramMessage } = require('../services/telegramService');
+const { formatTelegramDateTime, sendTelegramMessage } = require('../services/telegramService');
 
 const ALLOWED_STATUSES = new Set(['new', 'contacted', 'approved']);
 
@@ -34,9 +34,10 @@ const createApplication = async (req, res) => {
     sendTelegramMessage(
       [
         normalizedCourse ? '🔥 Yangi lead' : '🆘 Yangi support xabar',
-        `Ism: ${normalizedName} ${normalizedSurname}`.trim(),
-        `Tel: ${normalizedPhone}`,
-        ...(normalizedCourse ? [`Kurs: ${normalizedCourse}`] : []),
+        `👤 Ism: ${normalizedName} ${normalizedSurname}`.trim(),
+        `📞 Telefon: ${normalizedPhone}`,
+        ...(normalizedCourse ? [`🎓 Kurs: ${normalizedCourse}`] : []),
+        `🕒 Vaqt: ${formatTelegramDateTime()}`,
       ].join('\n')
     );
 
@@ -91,6 +92,18 @@ const updateApplicationStatus = async (req, res) => {
         success: false,
         message: 'Ariza topilmadi.',
       });
+    }
+
+    if (status === 'approved') {
+      sendTelegramMessage(
+        [
+          '✅ Ariza tasdiqlandi',
+          `👤 Ism: ${application.name} ${application.surname}`.trim(),
+          `📞 Telefon: ${application.phone || '-'}`,
+          `🎓 Kurs: ${application.course || '-'}`,
+          `🕒 Vaqt: ${formatTelegramDateTime()}`,
+        ].join('\n')
+      );
     }
 
     return res.json({

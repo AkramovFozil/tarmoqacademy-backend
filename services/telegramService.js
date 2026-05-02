@@ -1,6 +1,20 @@
 const https = require('https');
 
-const isEnabled = () => String(process.env.TELEGRAM_NOTIFICATIONS || '').toLowerCase() === 'true';
+const TELEGRAM_TIMEOUT_MS = 8000;
+
+const isEnabled = () => {
+  const value = String(process.env.TELEGRAM_NOTIFICATIONS || 'true').toLowerCase();
+  return !['false', '0', 'off', 'no'].includes(value);
+};
+
+const formatTelegramDateTime = (date = new Date()) => date.toLocaleString('uz-UZ', {
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'Asia/Tashkent',
+});
 
 const sendWithHttps = (token, payload) => new Promise((resolve, reject) => {
   const body = JSON.stringify(payload);
@@ -36,6 +50,9 @@ const sendWithHttps = (token, payload) => new Promise((resolve, reject) => {
     }
   );
 
+  request.setTimeout(TELEGRAM_TIMEOUT_MS, () => {
+    request.destroy(new Error('request timeout'));
+  });
   request.on('error', reject);
   request.write(body);
   request.end();
@@ -60,13 +77,27 @@ const sendTelegramMessage = async (text) => {
       return sendWithHttps(token, payload);
     }
 
-    const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timeout = controller
+      ? setTimeout(() => controller.abort(), TELEGRAM_TIMEOUT_MS)
+      : null;
+    let response;
+
+    try {
+      response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+    }
 
     if (!response.ok) {
       const body = await response.text();
@@ -82,5 +113,6 @@ const sendTelegramMessage = async (text) => {
 };
 
 module.exports = {
+  formatTelegramDateTime,
   sendTelegramMessage,
 };

@@ -2,7 +2,7 @@ const Purchase = require('../models/Purchase');
 const User = require('../models/User');
 const Course = require('../models/Course');
 const { createNotification, notifyAdmins, safeNotify } = require('../services/notificationService');
-const { sendTelegramMessage } = require('../services/telegramService');
+const { formatTelegramDateTime, sendTelegramMessage } = require('../services/telegramService');
 
 const DEFAULT_PURCHASE_AMOUNT = 99000;
 const formatAmount = (amount) => `${Number(amount || 0).toLocaleString('uz-UZ')} so'm`;
@@ -56,7 +56,7 @@ const createPurchase = async (req, res) => {
     }
 
     const [user, course] = await Promise.all([
-      User.findById(req.user._id).select('role name enrolledCourses purchasedCourses'),
+      User.findById(req.user._id).select('role name phone enrolledCourses purchasedCourses'),
       Course.findById(courseId).select('title isPublished price'),
     ]);
 
@@ -148,9 +148,11 @@ const createPurchase = async (req, res) => {
       sendTelegramMessage(
         [
           "💳 To'lov arizasi",
-          `User: ${user.name || 'Talaba'}`,
-          `Kurs: ${course.title || '-'}`,
-          `Summa: ${formatAmount(purchase.amount)}`,
+          `👤 Ism: ${user.name || 'Talaba'}`,
+          `📞 Telefon: ${user.phone || '-'}`,
+          `🎓 Kurs: ${course.title || '-'}`,
+          `💰 Summa: ${formatAmount(purchase.amount)}`,
+          `🕒 Vaqt: ${formatTelegramDateTime()}`,
         ].join('\n')
       );
     }

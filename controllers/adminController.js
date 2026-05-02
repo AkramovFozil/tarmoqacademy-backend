@@ -10,7 +10,7 @@ const UserProgress = require('../models/UserProgress');
 const TaskSubmission = require('../models/TaskSubmission');
 const { resolveCourseCategory } = require('./categoryController');
 const { notifyStudents, safeNotify } = require('../services/notificationService');
-const { sendTelegramMessage } = require('../services/telegramService');
+const { formatTelegramDateTime, sendTelegramMessage } = require('../services/telegramService');
 const {
   getMaxCourseLessonCount,
   normalizeLegacyCount,
@@ -317,8 +317,9 @@ const deleteUser = async (req, res) => {
       [
         '🚨 Muhim admin ogohlantirish',
         "Holat: Foydalanuvchi o'chirildi",
-        `Admin: ${req.user.name || req.user.email || '-'}`,
-        `User: ${user.name || user.email || req.params.id}`,
+        `👨‍💼 Admin: ${req.user.name || req.user.email || '-'}`,
+        `👤 User: ${user.name || user.email || req.params.id}`,
+        `🕒 Vaqt: ${formatTelegramDateTime()}`,
       ].join('\n')
     );
     res.json({ success: true, message: 'Foydalanuvchi o\'chirildi.' });
@@ -489,8 +490,9 @@ const deleteCourse = async (req, res) => {
       [
         '🚨 Muhim admin ogohlantirish',
         "Holat: Kurs o'chirildi",
-        `Admin: ${req.user.name || req.user.email || '-'}`,
-        `Kurs: ${course.title}`,
+        `👨‍💼 Admin: ${req.user.name || req.user.email || '-'}`,
+        `🎓 Kurs: ${course.title}`,
+        `🕒 Vaqt: ${formatTelegramDateTime()}`,
       ].join('\n')
     );
 
@@ -796,10 +798,11 @@ const createOfflineStudent = async (req, res) => {
     sendTelegramMessage(
       [
         "🏫 Yangi offline o'quvchi",
-        `User: ${user.name}`,
-        `Tel: ${user.phone || '-'}`,
-        `Kurs: ${course.title}`,
-        `Login: ${user.offlineLogin || normalizedLogin}`,
+        `👤 Ism: ${user.name}`,
+        `📞 Telefon: ${user.phone || '-'}`,
+        `🎓 Kurs: ${course.title}`,
+        `🔑 Login: ${user.offlineLogin || normalizedLogin}`,
+        `🕒 Vaqt: ${formatTelegramDateTime()}`,
       ].join('\n')
     );
     res.status(201).json({

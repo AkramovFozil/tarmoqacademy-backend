@@ -6,15 +6,9 @@ const TaskSubmission = require('../models/TaskSubmission');
 const User = require('../models/User');
 const UserProgress = require('../models/UserProgress');
 const { createNotification, notifyAdmins, safeNotify } = require('../services/notificationService');
-const { sendTelegramMessage } = require('../services/telegramService');
+const { formatTelegramDateTime, sendTelegramMessage } = require('../services/telegramService');
 
 const buildTaskFileUrl = (file) => (file ? `/uploads/tasks/${file.filename}` : '');
-
-const formatTime = (date = new Date()) => date.toLocaleTimeString('uz-UZ', {
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: 'Asia/Tashkent',
-});
 
 const hasFullCourseAccess = (user, courseId) => {
   if (!user) return false;
@@ -238,11 +232,13 @@ const submitTaskAnswer = async (req, res) => {
     }));
     sendTelegramMessage(
       [
-        '📚 Yangi topshiriq',
-        `User: ${req.user.name || 'Talaba'}`,
-        `Kurs: ${context.course.title || '-'}`,
-        `Lesson: ${context.lesson.title || '-'}`,
-        `Vaqt: ${formatTime()}`,
+        isTelegramSubmission ? '📲 Telegram homework submit' : '📚 Homework submit',
+        `👤 Ism: ${req.user.name || 'Talaba'}`,
+        `📞 Telefon: ${req.user.phone || '-'}`,
+        `🎓 Kurs: ${context.course.title || '-'}`,
+        `📘 Dars: ${context.lesson.title || '-'}`,
+        ...(isTelegramSubmission ? [`💬 Telegram: @${normalizedTelegramUsername}`] : []),
+        `🕒 Vaqt: ${formatTelegramDateTime()}`,
       ].join('\n')
     );
 
@@ -386,6 +382,20 @@ const reviewTaskSubmission = async (req, res) => {
     }));
 
     const populated = await populateSubmissionQuery(TaskSubmission.findById(submission._id));
+
+    if (status === 'approved') {
+      const approvedView = serializeSubmission(populated);
+      sendTelegramMessage(
+        [
+          '✅ Homework tasdiqlandi',
+          `👤 Ism: ${approvedView.userName || 'Talaba'}`,
+          `🎓 Kurs: ${approvedView.courseTitle || '-'}`,
+          `📘 Dars: ${approvedView.lessonTitle || '-'}`,
+          `👨‍💼 Admin: ${req.user.name || req.user.email || '-'}`,
+          `🕒 Vaqt: ${formatTelegramDateTime()}`,
+        ].join('\n')
+      );
+    }
 
     return res.status(200).json({
       success: true,

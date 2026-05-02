@@ -2,7 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { notifyAdmins, safeNotify } = require('../services/notificationService');
 const { syncLegacyProgressForUser } = require('../services/legacyProgressService');
-const { sendTelegramMessage } = require('../services/telegramService');
+const { formatTelegramDateTime, sendTelegramMessage } = require('../services/telegramService');
 
 // Generate JWT token
 const generateToken = (id) => {
@@ -16,10 +16,11 @@ const generateToken = (id) => {
 // @access  Public
 const register = async (req, res) => {
   try {
-    const { name, email, password } = req.body || {};
+    const { name, email, password, phone } = req.body || {};
     const normalizedName = typeof name === 'string' ? name.trim() : '';
     const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
     const normalizedPassword = typeof password === 'string' ? password : '';
+    const normalizedPhone = typeof phone === 'string' ? phone.trim() : '';
 
     if (!normalizedName || !normalizedEmail || !normalizedPassword) {
       return res.status(400).json({
@@ -48,6 +49,7 @@ const register = async (req, res) => {
     const user = await User.create({
       name: normalizedName,
       email: normalizedEmail,
+      phone: normalizedPhone,
       password: normalizedPassword,
       role: 'student',
     });
@@ -61,9 +63,11 @@ const register = async (req, res) => {
     }));
     sendTelegramMessage(
       [
-        "🆕 Yangi ro'yxatdan o'tish",
-        `User: ${user.name}`,
-        `Email: ${user.email}`,
+        '🆕 Yangi user',
+        `👤 Ism: ${user.name}`,
+        `📞 Telefon: ${user.phone || '-'}`,
+        `📧 Email: ${user.email}`,
+        `🕒 Vaqt: ${formatTelegramDateTime()}`,
       ].join('\n')
     );
 
