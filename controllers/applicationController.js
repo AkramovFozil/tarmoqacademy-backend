@@ -4,6 +4,28 @@ const { formatTelegramDateTime, sendTelegramMessage } = require('../services/tel
 
 const ALLOWED_STATUSES = new Set(['new', 'contacted', 'approved']);
 
+const notifyApplicationTelegram = async ({ name, surname, phone, course }) => {
+  try {
+    const result = await sendTelegramMessage(
+      [
+        '📥 Yangi kurs arizasi',
+        `👤 Ism: ${`${name} ${surname}`.trim() || '-'}`,
+        `📞 Telefon: ${phone || '-'}`,
+        `📚 Kurs: ${course || '-'}`,
+        `🕒 Vaqt: ${formatTelegramDateTime()}`,
+      ].join('\n')
+    );
+
+    if (result) {
+      console.log('[telegram] application notification sent');
+    } else {
+      console.error('[telegram] application notification failed or skipped');
+    }
+  } catch (error) {
+    console.error('[telegram] application notification error:', error.message);
+  }
+};
+
 const createApplication = async (req, res) => {
   try {
     const { name, surname, phone, course } = req.body || {};
@@ -31,15 +53,12 @@ const createApplication = async (req, res) => {
       message: `${normalizedName} ${normalizedSurname} ${normalizedCourse ? `"${normalizedCourse}" bo'yicha` : ''} murojaat qoldirdi.`,
       type: 'admin_support_message',
     }));
-    sendTelegramMessage(
-      [
-        normalizedCourse ? '🔥 Yangi lead' : '🆘 Yangi support xabar',
-        `👤 Ism: ${normalizedName} ${normalizedSurname}`.trim(),
-        `📞 Telefon: ${normalizedPhone}`,
-        ...(normalizedCourse ? [`🎓 Kurs: ${normalizedCourse}`] : []),
-        `🕒 Vaqt: ${formatTelegramDateTime()}`,
-      ].join('\n')
-    );
+    await notifyApplicationTelegram({
+      name: normalizedName,
+      surname: normalizedSurname,
+      phone: normalizedPhone,
+      course: normalizedCourse,
+    });
 
     return res.status(201).json({
       success: true,
